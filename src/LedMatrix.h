@@ -7,9 +7,13 @@
 
 class LedMatrix {
 public:
-    LedMatrix(MD_MAX72XX::moduleType_t type, uint8_t csPin, uint8_t modules, bool mirrorX,
-              bool flipY)
-        : mx_(type, csPin, modules), mirrorX_(mirrorX), flipY_(flipY) {}
+    // Software (bit-banged) SPI on the given pins. MD_MAX72XX's hardware SPI
+    // runs at a fixed 8 MHz, which leaves little margin when the 5 V MAX7219
+    // is driven directly by 3.3 V GPIO over jumper wires. The display only
+    // changes a few times per second, so the slower clock costs nothing.
+    LedMatrix(MD_MAX72XX::moduleType_t type, uint8_t dinPin, uint8_t clkPin, uint8_t csPin,
+              uint8_t modules, bool mirrorX, bool flipY)
+        : mx_(type, dinPin, clkPin, csPin, modules), mirrorX_(mirrorX), flipY_(flipY) {}
 
     bool begin(uint8_t intensity);
     void setIntensity(uint8_t intensity);

@@ -24,7 +24,8 @@ static constexpr int64_t kClockValidAfter = 1700000000;  // 2023-11; earlier = n
 static constexpr uint32_t kLongPressMs = 5000;
 static constexpr uint32_t kModeBannerMs = 1500;
 
-static LedMatrix display(DISPLAY_HARDWARE_TYPE, DISPLAY_CS_PIN, DISPLAY_MODULES,
+static LedMatrix display(DISPLAY_HARDWARE_TYPE, DISPLAY_DIN_PIN, DISPLAY_CLK_PIN, DISPLAY_CS_PIN,
+                         DISPLAY_MODULES,
                          DISPLAY_MIRROR_X != 0, DISPLAY_FLIP_Y != 0);
 static WifiLink wifi;
 static ThaiGoldTodayClient apiClient(GOLD_API_URL, GOLD_API_ALLOW_INSECURE_TLS != 0,

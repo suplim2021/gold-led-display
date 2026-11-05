@@ -17,7 +17,9 @@ gold::FetchResult ThaiGoldTodayClient::fetch(gold::GoldPrice& out) {
     } else {
         tls.setCACert(GOLD_API_ROOT_CA);
     }
-    tls.setTimeout((timeoutMs_ + 999) / 1000);  // seconds
+    const uint32_t timeoutSec = (timeoutMs_ + 999) / 1000;
+    tls.setTimeout(timeoutSec);           // socket read/write, seconds
+    tls.setHandshakeTimeout(timeoutSec);  // default would be 120 s
 
     HTTPClient http;
     http.setConnectTimeout(timeoutMs_);

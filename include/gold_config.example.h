@@ -17,8 +17,11 @@
 #define OTA_ENABLED 1
 #define OTA_PASSWORD "goldled-ota"          // must match --auth in platformio.ini
 
-// ----- Display wiring (ESP32 VSPI hardware SPI) -----
-// DIN -> GPIO23 (MOSI) and CLK -> GPIO18 (SCK) are fixed by hardware SPI.
+// ----- Display wiring -----
+// Driven with slow software SPI (more reliable with 3.3 V logic), so any
+// output-capable GPIO works. Defaults match docs/WIRING.md.
+#define DISPLAY_DIN_PIN 23
+#define DISPLAY_CLK_PIN 18
 #define DISPLAY_CS_PIN 5
 #define DISPLAY_MODULES 4
 
