@@ -1,0 +1,10 @@
+{
+  "name": "GoldCore",
+  "version": "1.0.0",
+  "description": "Hardware independent logic for the Thai gold price LED display: fonts, 32x8 renderer, API parser, freshness tracking.",
+  "frameworks": "*",
+  "platforms": "*",
+  "dependencies": {
+    "bblanchon/ArduinoJson": "7.2.1"
+  }
+}

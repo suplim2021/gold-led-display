@@ -1,0 +1,5 @@
+.pio/
+.vscode/
+include/gold_config.h
+tools/preview/out/
+*.o
