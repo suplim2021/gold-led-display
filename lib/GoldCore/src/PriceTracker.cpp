@@ -9,8 +9,17 @@ void PriceTracker::restore(const GoldPrice& p) {
     dirty_ = false;  // it came from flash, nothing to write back
 }
 
-void PriceTracker::onFetchSuccess(const GoldPrice& p, uint32_t nowMs) {
-    if (!hasPrice_ || !price_.sameAs(p)) dirty_ = true;
+void PriceTracker::onFetchSuccess(const GoldPrice& fetched, uint32_t nowMs) {
+    GoldPrice p = fetched;
+    if (!p.hasTrend && hasPrice_) {
+        // API history unavailable: derive the direction ourselves.
+        if (p.sellBar != price_.sellBar) {
+            p.trend = p.sellBar > price_.sellBar ? 1 : -1;
+        } else {
+            p.trend = price_.trend;
+        }
+    }
+    if (!hasPrice_ || !price_.sameThaiPrice(p)) dirty_ = true;  // world price is not persisted
     price_ = p;
     hasPrice_ = true;
     fetchedThisSession_ = true;

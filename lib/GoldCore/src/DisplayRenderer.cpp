@@ -62,16 +62,23 @@ int formatPrice(int32_t price, char* buf, int bufSize) {
     return n;
 }
 
-RenderResult renderPrice(Frame& frame, int32_t price, PriceMarker marker, bool staleUnderline) {
-    frame.clear();
-    RenderResult r = {false, 0, 0};
-    if (price < 0 || price > kMaxDisplayablePrice) return r;
-    char digits[12];
-    if (formatPrice(price, digits, sizeof(digits)) == 0) return r;
+void drawTrend(Frame& frame, int8_t trend) {
+    if (trend > 0) {
+        frame.set(30, 1);
+        frame.set(29, 2);
+        frame.set(30, 2);
+        frame.set(31, 2);
+    } else if (trend < 0) {
+        frame.set(29, 5);
+        frame.set(30, 5);
+        frame.set(31, 5);
+        frame.set(30, 6);
+    }
+}
 
-    r = renderCenteredText(frame, digits);
+static RenderResult decorate(Frame& frame, RenderResult r, PriceMarker marker, bool stale,
+                             int8_t trend) {
     if (!r.ok) return r;
-
     if (marker == PriceMarker::Sell) {
         frame.set(0, 1);
         frame.set(0, 2);
@@ -79,11 +86,33 @@ RenderResult renderPrice(Frame& frame, int32_t price, PriceMarker marker, bool s
         frame.set(0, 5);
         frame.set(0, 6);
     }
-    if (staleUnderline) {
+    drawTrend(frame, trend);
+    if (stale) {
         for (int x = r.x; x < r.x + r.width; x += 2) frame.set(x, Frame::kHeight - 1);
     }
     r.ok = (frame.clipped == 0);
     return r;
+}
+
+RenderResult renderPrice(Frame& frame, int32_t price, PriceMarker marker, bool staleUnderline,
+                         int8_t trend) {
+    frame.clear();
+    RenderResult r = {false, 0, 0};
+    if (price < 0 || price > kMaxDisplayablePrice) return r;
+    char digits[12];
+    if (formatPrice(price, digits, sizeof(digits)) == 0) return r;
+    return decorate(frame, renderCenteredText(frame, digits), marker, staleUnderline, trend);
+}
+
+RenderResult renderWorldPrice(Frame& frame, int32_t usd, bool staleUnderline, int8_t trend) {
+    frame.clear();
+    RenderResult r = {false, 0, 0};
+    if (usd < 0 || usd > 99999) return r;
+    char text[13];
+    text[0] = '$';
+    if (formatPrice(usd, text + 1, sizeof(text) - 1) == 0) return r;
+    return decorate(frame, renderCenteredText(frame, text), PriceMarker::None, staleUnderline,
+                    trend);
 }
 
 }  // namespace gold

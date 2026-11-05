@@ -72,10 +72,18 @@ static void writeHtml(const std::vector<Item>& items, const char* path) {
 }
 
 static Item priceItem(const std::string& title, int32_t price, PriceMarker m = PriceMarker::None,
-                      bool stale = false) {
+                      bool stale = false, int8_t trend = 0) {
     Item it;
     it.title = title;
-    it.ok = renderPrice(it.frame, price, m, stale).ok;
+    it.ok = renderPrice(it.frame, price, m, stale, trend).ok;
+    return it;
+}
+
+static Item worldItem(const std::string& title, int32_t usd, bool stale = false,
+                      int8_t trend = 0) {
+    Item it;
+    it.title = title;
+    it.ok = renderWorldPrice(it.frame, usd, stale, trend).ok;
     return it;
 }
 
@@ -109,26 +117,40 @@ int main(int argc, char** argv) {
             fprintf(stderr, "parse error: %s\n", parseErrorName(e));
             return 1;
         }
-        printf("parsed: buyBar=%d sellBar=%d change=%d updatedAt(epoch)=%lld\n\n", p.buyBar,
-               p.sellBar, p.change, (long long)p.updatedAtEpoch);
-        items.push_back(priceItem("Mode A — sell " + std::to_string(p.sellBar), p.sellBar));
-        items.push_back(priceItem("Mode B — sell", p.sellBar, PriceMarker::Sell));
-        items.push_back(priceItem("Mode B — buy", p.buyBar, PriceMarker::Buy));
+        printf("parsed: bar buy=%d sell=%d | ornament buy=%d sell=%d | round trend=%d | "
+               "day change=%d | world=$%d (trend %d) | updatedAt(epoch)=%lld\n\n",
+               p.buyBar, p.sellBar, p.buyOrnament, p.sellOrnament, p.trend, p.change,
+               p.worldSpot, p.worldTrend, (long long)p.updatedAtEpoch);
+        items.push_back(priceItem("Thai bar sell " + std::to_string(p.sellBar), p.sellBar,
+                                  PriceMarker::None, false, p.trend));
+        items.push_back(priceItem("Thai bar buy", p.buyBar, PriceMarker::Buy, false, p.trend));
+        if (p.hasOrnament)
+            items.push_back(priceItem("Thai ornament sell", p.sellOrnament, PriceMarker::None,
+                                      false, p.trend));
+        if (p.hasWorld)
+            items.push_back(worldItem("World spot USD/oz", p.worldSpot, false, p.worldTrend));
     } else if (!args.empty()) {
         for (const std::string& a : args) {
             items.push_back(priceItem("price " + a, (int32_t)atol(a.c_str())));
         }
     } else {
         // Demo set (example prices only — NOT real/live data)
-        items.push_back(priceItem("Mode A — 5 digits (65950)", 65950));
-        items.push_back(priceItem("Mode A — 6 digits (100000)", 100000));
-        items.push_back(priceItem("Mode B — sell (marker top-left)", 65950, PriceMarker::Sell));
-        items.push_back(priceItem("Mode B — buy (marker bottom-left)", 65750, PriceMarker::Buy));
-        items.push_back(priceItem("Mode C — stale price (dotted underline)", 65950,
-                                  PriceMarker::None, true));
-        items.push_back(priceItem("Mode C — stale 6 digits", 100000, PriceMarker::None, true));
+        items.push_back(priceItem("Thai sell, last round UP (triangle top-right)", 65950,
+                                  PriceMarker::None, false, 1));
+        items.push_back(priceItem("Thai sell, last round DOWN (triangle bottom-right)", 65950,
+                                  PriceMarker::None, false, -1));
+        items.push_back(worldItem("World spot $/oz (mode 2), up", 4139, false, 1));
+        items.push_back(priceItem("Thai sell, no change / arrow off", 65950));
+        items.push_back(priceItem("6 digits (100000) + up", 100000, PriceMarker::None, false, 1));
+        items.push_back(priceItem("Mode 1 — sell (dot top-left)", 65950, PriceMarker::Sell, false, 1));
+        items.push_back(priceItem("Mode 1 — buy (dot bottom-left)", 65750, PriceMarker::Buy, false, 1));
+        items.push_back(priceItem("Stale price (dotted underline)", 65950, PriceMarker::None, true,
+                                  -1));
+        items.push_back(priceItem("Stale 6 digits", 100000, PriceMarker::None, true));
         Screen s;
         items.push_back(screenItem("Booting / waiting for first price", s));
+        s.kind = ScreenKind::Setup;
+        items.push_back(screenItem("AP — Wi-Fi setup: connect phone to GoldLED-Setup", s));
         s.kind = ScreenKind::Status;
         const char* names[] = {"", "E1 — no Wi-Fi", "E2 — API/HTTP error or timeout",
                                "E3 — bad data / schema changed", "E4 — price timestamp too old"};

@@ -72,6 +72,26 @@ static bool readPrice(JsonVariantConst v, int32_t& out, bool& present) {
 
 static bool plausible(int32_t p) { return p >= kMinPlausiblePrice && p <= kMaxPlausiblePrice; }
 
+// Lenient number reader for optional fields: rounds fractions (e.g. 63899.4).
+static bool readRounded(JsonVariantConst v, int32_t& out) {
+    if (v.is<long long>()) {
+        const long long n = v.as<long long>();
+        if (n < -2000000000LL || n > 2000000000LL) return false;
+        out = (int32_t)n;
+        return true;
+    }
+    if (v.is<double>()) {
+        const double d = v.as<double>();
+        if (!(d > -2.0e9 && d < 2.0e9)) return false;
+        out = (int32_t)lround(d);
+        return true;
+    }
+    if (v.is<const char*>()) return parsePriceText(v.as<const char*>(), out);
+    return false;
+}
+
+static int8_t signOf(int32_t v) { return v > 0 ? 1 : (v < 0 ? -1 : 0); }
+
 ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out) {
     if (!body || length == 0) return ParseError::EmptyBody;
     bool onlySpace = true;
@@ -84,13 +104,20 @@ ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out) {
     }
     if (onlySpace) return ParseError::EmptyBody;
 
-    // Keep only the fields we need; the full response (~4-5 KB, with history)
-    // is never materialised in RAM as a JSON tree.
+    // Keep only the fields we need; the rest of the response (weekly data,
+    // ornament history, etc.) is never materialised in RAM.
     JsonDocument filter;
     filter["current"]["buyBar"] = true;
     filter["current"]["sellBar"] = true;
+    filter["current"]["buyOrnament"] = true;
+    filter["current"]["sellOrnament"] = true;
     filter["current"]["updatedAt"] = true;
     filter["current"]["change"] = true;
+    filter["history"][0]["sellBar"] = true;  // [0] = applies to every element
+    filter["history"][0]["change"] = true;
+    filter["world"]["spotOz"] = true;
+    filter["world"]["change"] = true;
+    filter["world"]["updatedAt"] = true;
 
     JsonDocument doc;
     const DeserializationError err =
@@ -115,13 +142,48 @@ ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out) {
     if (!ts.is<const char*>()) return ParseError::InvalidTimestamp;
     if (!parseIso8601(ts.as<const char*>(), p.updatedAtEpoch)) return ParseError::InvalidTimestamp;
 
-    JsonVariantConst ch = current["change"];
-    if (ch.is<long long>()) {
-        p.change = (int32_t)ch.as<long long>();
+    // ---- optional fields: a problem here never rejects the bar price ----
+    int32_t v = 0;
+    if (readRounded(current["change"], v)) {
+        p.change = v;
         p.hasChange = true;
-    } else if (ch.is<double>()) {
-        p.change = (int32_t)lround(ch.as<double>());
-        p.hasChange = true;
+    }
+
+    int32_t bo = 0, so = 0;
+    if (readRounded(current["buyOrnament"], bo) && readRounded(current["sellOrnament"], so) &&
+        plausible(bo) && plausible(so) && bo <= so) {
+        p.buyOrnament = bo;
+        p.sellOrnament = so;
+        p.hasOrnament = true;
+    }
+
+    // Direction of the latest announcement round. NOTE: current.change is the
+    // change vs. the previous DAY; the per-round change is in history[].change.
+    // Only trusted when the last history entry is the same price as `current`.
+    JsonArrayConst history = doc["history"].as<JsonArrayConst>();
+    if (!history.isNull() && history.size() > 0) {
+        JsonVariantConst last = history[history.size() - 1];
+        int32_t hSell = 0, hChange = 0;
+        bool present = false;
+        if (readPrice(last["sellBar"], hSell, present) && hSell == p.sellBar &&
+            readRounded(last["change"], hChange)) {
+            p.trend = signOf(hChange);
+            p.hasTrend = true;
+        }
+    }
+
+    JsonObjectConst world = doc["world"].as<JsonObjectConst>();
+    if (!world.isNull()) {
+        int32_t spot = 0;
+        if (readRounded(world["spotOz"], spot) && spot >= kMinPlausibleWorld &&
+            spot <= kMaxPlausibleWorld) {
+            p.worldSpot = spot;
+            p.hasWorld = true;
+            int32_t wc = 0;
+            if (readRounded(world["change"], wc)) p.worldTrend = signOf(wc);
+            JsonVariantConst wts = world["updatedAt"];
+            if (wts.is<const char*>()) parseIso8601(wts.as<const char*>(), p.worldUpdatedEpoch);
+        }
     }
 
     out = p;

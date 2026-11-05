@@ -9,11 +9,16 @@
 //       "change": 1050, "changePercent": 1.63,
 //       "updateRound": 2                            <- in docs, absent live
 //     },
-//     "history": [...], "world": {...}, ...         <- ignored
+//     "history": [ {..., "sellBar": 65400, "change": -50}, ... ]  <- per round
+//     "world": { "spotOz": 4131.67, "change": 84.2, "updatedAt": "..." }
 //   }
 // Only `current.buyBar`, `current.sellBar` and `current.updatedAt` are
-// mandatory; `current.change` is optional. Numbers given as strings with
-// thousands separators ("65,450") are accepted.
+// mandatory. Everything else is optional and never rejects the bar price:
+//   * current.change       = change vs. previous DAY (verified on live data)
+//   * history[last].change = change of the latest round -> trend arrow
+//   * ornament prices (may contain decimals -> rounded)
+//   * world.spotOz (USD/oz, rounded), sign of world.change
+// Numbers given as strings with thousands separators ("65,450") are accepted.
 #pragma once
 
 #include <stddef.h>
@@ -38,6 +43,8 @@ const char* parseErrorName(ParseError e);
 
 constexpr int32_t kMinPlausiblePrice = 10000;   // sanity bounds, THB
 constexpr int32_t kMaxPlausiblePrice = 999999;  // also the 6-digit display limit
+constexpr int32_t kMinPlausibleWorld = 200;     // USD/oz sanity bounds
+constexpr int32_t kMaxPlausibleWorld = 99999;   // "$" + 5 digits still fits
 
 ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out);
 

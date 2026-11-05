@@ -297,6 +297,67 @@ void test_status_codes_render() {
     }
 }
 
+void test_trend_arrows() {
+    Frame up, down, none;
+    renderPrice(up, 65950, PriceMarker::None, false, 1);
+    renderPrice(down, 65950, PriceMarker::None, false, -1);
+    renderPrice(none, 65950, PriceMarker::None, false, 0);
+    // up: top-right triangle, rows 1-2
+    TEST_ASSERT_TRUE(up.get(30, 1) && up.get(29, 2) && up.get(30, 2) && up.get(31, 2));
+    TEST_ASSERT_FALSE(up.get(29, 1) || up.get(31, 1));
+    for (int y = 3; y < 8; ++y)
+        for (int x = 28; x < 32; ++x) TEST_ASSERT_FALSE(up.get(x, y));
+    // down: bottom-right triangle, rows 5-6
+    TEST_ASSERT_TRUE(down.get(29, 5) && down.get(30, 5) && down.get(31, 5) && down.get(30, 6));
+    for (int y = 0; y < 5; ++y)
+        for (int x = 28; x < 32; ++x) TEST_ASSERT_FALSE(down.get(x, y));
+    // the arrow never touches the digits: column 28 stays empty, row 0/7 stay empty
+    for (int y = 0; y < 8; ++y) {
+        TEST_ASSERT_FALSE(up.get(28, y));
+        TEST_ASSERT_FALSE(down.get(28, y));
+    }
+    TEST_ASSERT_EQUAL_UINT32(0, up.rows[0] | up.rows[7] | down.rows[0] | down.rows[7]);
+    // digits identical with or without arrow
+    for (int y = 0; y < 8; ++y) {
+        TEST_ASSERT_EQUAL_UINT32(none.rows[y] & 0x0FFFFFFFu, up.rows[y] & 0x0FFFFFFFu);
+        TEST_ASSERT_EQUAL_UINT32(none.rows[y] & 0x0FFFFFFFu, down.rows[y] & 0x0FFFFFFFu);
+    }
+}
+
+void test_arrow_fits_with_six_digits_and_markers() {
+    Frame f;
+    RenderResult r = renderPrice(f, 100000, PriceMarker::Buy, true, -1);
+    TEST_ASSERT_TRUE(r.ok);
+    TEST_ASSERT_EQUAL(0, f.clipped);
+    TEST_ASSERT_TRUE(f.get(0, 5) && f.get(30, 6));
+    TEST_ASSERT_FALSE(f.get(27, 1) || f.get(28, 1));  // gap between digits and arrow
+}
+
+void test_world_price_layout() {
+    Frame f;
+    RenderResult r = renderWorldPrice(f, 4139, false, 1);
+    TEST_ASSERT_TRUE(r.ok);
+    TEST_ASSERT_EQUAL(24, r.width);  // "$4139" = 5 chars in 4x6
+    TEST_ASSERT_EQUAL(4, r.x);
+    TEST_ASSERT_TRUE(rowEmpty(f, 0));
+    TEST_ASSERT_TRUE(rowEmpty(f, 7));
+    Frame g;
+    TEST_ASSERT_TRUE(renderWorldPrice(g, 10250).ok);  // "$10250" -> 3x6 font
+    TEST_ASSERT_EQUAL(0, g.clipped);
+    Frame h;
+    TEST_ASSERT_FALSE(renderWorldPrice(h, 100000).ok);
+}
+
+void test_dollar_and_letters_exist() {
+    const char* chars = "$AP";
+    for (const char* c = chars; *c; ++c) {
+        TEST_ASSERT_NOT_NULL(FONT_4X6.find(*c));
+        TEST_ASSERT_NOT_NULL(FONT_3X6.find(*c));
+    }
+    Frame f;
+    TEST_ASSERT_TRUE(renderCenteredText(f, "AP").ok);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_font_4x6_all_digits_match_design);
@@ -318,5 +379,9 @@ int main(int, char**) {
     RUN_TEST(test_stale_underline_only_on_row7_under_digits);
     RUN_TEST(test_mode_a_has_no_indicator_pixels);
     RUN_TEST(test_status_codes_render);
+    RUN_TEST(test_trend_arrows);
+    RUN_TEST(test_arrow_fits_with_six_digits_and_markers);
+    RUN_TEST(test_world_price_layout);
+    RUN_TEST(test_dollar_and_letters_exist);
     return UNITY_END();
 }

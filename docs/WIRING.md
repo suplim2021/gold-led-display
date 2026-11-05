@@ -96,7 +96,7 @@ Pinout SN74HCT125N / SN74AHCT125N (DIP-14, มองจากด้านบน 
 
 - GPIO23/18 คือ hardware SPI (VSPI) — ถ้าเปลี่ยนขาต้องแก้โค้ดให้ใช้ software SPI
 - GPIO5 เป็น strapping pin (ต้องเป็น High ตอนบูต) — CS ของ MAX7219 idle เป็น High อยู่แล้วจึงใช้ได้ ถ้าบูต/อัปโหลดมีปัญหา ให้ย้าย CS ไป GPIO16, GPIO17 หรือ GPIO21 (ไม่ใช่ strapping pin) แล้วแก้ `DISPLAY_CS_PIN`
-- ปุ่ม **BOOT (GPIO0)** บนบอร์ดใช้สลับ Mode A/B ขณะทำงานได้
+- ปุ่ม **BOOT (GPIO0)** บนบอร์ดกดสั้น = เปลี่ยนโหมดแสดงผล, กดค้าง 5 วินาที = ตั้ง Wi-Fi ใหม่
 
 ## Checklist ก่อนจ่ายไฟครั้งแรก
 

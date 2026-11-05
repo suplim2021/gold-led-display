@@ -29,6 +29,88 @@ void test_live_response_captured_from_api() {
     TEST_ASSERT_EQUAL_INT32(1050, p.change);
     // 2026-11-05T04:26:00.000Z
     TEST_ASSERT_EQUAL_INT64(1793852760LL, p.updatedAtEpoch);
+    // ornament
+    TEST_ASSERT_TRUE(p.hasOrnament);
+    TEST_ASSERT_EQUAL_INT32(63945, p.buyOrnament);
+    TEST_ASSERT_EQUAL_INT32(66250, p.sellOrnament);
+    // trend comes from history[last].change (-50), NOT current.change (+1050 = vs. yesterday)
+    TEST_ASSERT_TRUE(p.hasTrend);
+    TEST_ASSERT_EQUAL_INT8(-1, p.trend);
+    // world spot 4138.55 -> 4139, change +91.1
+    TEST_ASSERT_TRUE(p.hasWorld);
+    TEST_ASSERT_EQUAL_INT32(4139, p.worldSpot);
+    TEST_ASSERT_EQUAL_INT8(1, p.worldTrend);
+    TEST_ASSERT_TRUE(p.worldUpdatedEpoch > p.updatedAtEpoch);
+}
+
+static const char* kBase =
+    "\"current\":{\"buyBar\":65250,\"sellBar\":65450,\"updatedAt\":\"2026-11-05T04:26:00Z\"}";
+
+static ParseError parseWith(const char* extra, GoldPrice& p) {
+    std::string json = std::string("{") + kBase + extra + "}";
+    return parseThaiGoldToday(json.c_str(), json.size(), p);
+}
+
+void test_trend_from_history_up_down_flat() {
+    GoldPrice p;
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseWith(",\"history\":[{\"sellBar\":65300,\"change\":-100},"
+                                "{\"sellBar\":65450,\"change\":150}]", p));
+    TEST_ASSERT_TRUE(p.hasTrend);
+    TEST_ASSERT_EQUAL_INT8(1, p.trend);
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseWith(",\"history\":[{\"sellBar\":65450,\"change\":-50}]", p));
+    TEST_ASSERT_EQUAL_INT8(-1, p.trend);
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseWith(",\"history\":[{\"sellBar\":65450,\"change\":0}]", p));
+    TEST_ASSERT_TRUE(p.hasTrend);
+    TEST_ASSERT_EQUAL_INT8(0, p.trend);
+}
+
+void test_trend_ignored_when_history_does_not_match_current() {
+    GoldPrice p;
+    // last history round is a different price -> do not trust it
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseWith(",\"history\":[{\"sellBar\":65500,\"change\":50}]", p));
+    TEST_ASSERT_FALSE(p.hasTrend);
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseWith(",\"history\":[]", p));
+    TEST_ASSERT_FALSE(p.hasTrend);
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseWith(",\"history\":\"oops\"", p));
+    TEST_ASSERT_FALSE(p.hasTrend);
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseWith("", p));
+    TEST_ASSERT_FALSE(p.hasTrend);
+    TEST_ASSERT_EQUAL_INT8(0, p.trend);
+}
+
+void test_world_optional_and_validated() {
+    GoldPrice p;
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseWith("", p));
+    TEST_ASSERT_FALSE(p.hasWorld);
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseWith(",\"world\":{\"spotOz\":4131.49,\"change\":-12.5}", p));
+    TEST_ASSERT_TRUE(p.hasWorld);
+    TEST_ASSERT_EQUAL_INT32(4131, p.worldSpot);
+    TEST_ASSERT_EQUAL_INT8(-1, p.worldTrend);
+    // broken world data never rejects the Thai price
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseWith(",\"world\":{\"spotOz\":\"n/a\"}", p));
+    TEST_ASSERT_FALSE(p.hasWorld);
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseWith(",\"world\":{\"spotOz\":5}", p));
+    TEST_ASSERT_FALSE(p.hasWorld);
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseWith(",\"world\":null", p));
+    TEST_ASSERT_FALSE(p.hasWorld);
+    TEST_ASSERT_EQUAL_INT32(65450, p.sellBar);
+}
+
+void test_ornament_optional_and_rounded() {
+    GoldPrice p;
+    std::string json =
+        "{\"current\":{\"buyBar\":65250,\"sellBar\":65450,\"buyOrnament\":63944.88,"
+        "\"sellOrnament\":66250,\"updatedAt\":\"2026-11-05T04:26:00Z\"}}";
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseThaiGoldToday(json.c_str(), json.size(), p));
+    TEST_ASSERT_TRUE(p.hasOrnament);
+    TEST_ASSERT_EQUAL_INT32(63945, p.buyOrnament);
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseWith("", p));
+    TEST_ASSERT_FALSE(p.hasOrnament);
 }
 
 void test_documented_sample_response() {
@@ -244,6 +326,10 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_live_response_captured_from_api);
     RUN_TEST(test_documented_sample_response);
+    RUN_TEST(test_trend_from_history_up_down_flat);
+    RUN_TEST(test_trend_ignored_when_history_does_not_match_current);
+    RUN_TEST(test_world_optional_and_validated);
+    RUN_TEST(test_ornament_optional_and_rounded);
     RUN_TEST(test_change_is_optional);
     RUN_TEST(test_negative_change);
     RUN_TEST(test_prices_with_comma_separators);

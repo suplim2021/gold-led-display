@@ -4,6 +4,6 @@
 #if __has_include("gold_config.h")
 #include "gold_config.h"
 #else
-#warning "include/gold_config.h not found - using gold_config.example.h (Wi-Fi will not connect). Copy include/gold_config.example.h to include/gold_config.h"
+#warning "include/gold_config.h not found - using gold_config.example.h . Copy include/gold_config.example.h to include/gold_config.h"
 #include "gold_config.example.h"
 #endif

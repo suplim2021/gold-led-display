@@ -3,6 +3,7 @@
 // (Logic only - the real Wi-Fi / flash are exercised on hardware.)
 #include <unity.h>
 
+#include "Brightness.h"
 #include "PriceTracker.h"
 #include "ScreenSelector.h"
 
@@ -21,6 +22,14 @@ static GoldPrice samplePrice() {
     p.change = 1050;
     p.hasChange = true;
     p.updatedAtEpoch = kAnnounced;
+    p.buyOrnament = 63945;
+    p.sellOrnament = 66250;
+    p.hasOrnament = true;
+    p.trend = 1;
+    p.hasTrend = true;
+    p.worldSpot = 4139;
+    p.worldTrend = -1;
+    p.hasWorld = true;
     return p;
 }
 
@@ -226,9 +235,9 @@ void test_mode_b_alternates_sell_and_buy() {
     PriceTracker t;
     t.setWifiConnected(true);
     t.onFetchSuccess(samplePrice(), 0);
-    Screen a = screenFor(t, 1000, kNow, DisplayMode::Alternate);
-    Screen b = screenFor(t, 6000, kNow, DisplayMode::Alternate);
-    Screen c = screenFor(t, 11000, kNow, DisplayMode::Alternate);
+    Screen a = screenFor(t, 1000, kNow, DisplayMode::SellBuy);
+    Screen b = screenFor(t, 6000, kNow, DisplayMode::SellBuy);
+    Screen c = screenFor(t, 11000, kNow, DisplayMode::SellBuy);
     TEST_ASSERT_EQUAL(PriceMarker::Sell, a.marker);
     TEST_ASSERT_EQUAL_INT32(65450, a.value);
     TEST_ASSERT_EQUAL(PriceMarker::Buy, b.marker);
@@ -251,6 +260,124 @@ void test_render_screen_never_fails_for_known_states() {
     TEST_ASSERT_TRUE(f.litCount() > 0);
 }
 
+void test_mode2_thai_then_world() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    t.onFetchSuccess(samplePrice(), 0);
+    // default timing: Thai 8 s, world 4 s
+    Screen a = screenFor(t, 1000, kNow, DisplayMode::ThaiWorld);
+    Screen b = screenFor(t, 7900, kNow, DisplayMode::ThaiWorld);
+    Screen c = screenFor(t, 9000, kNow, DisplayMode::ThaiWorld);
+    Screen d = screenFor(t, 12500, kNow, DisplayMode::ThaiWorld);
+    TEST_ASSERT_EQUAL(ScreenKind::Price, a.kind);
+    TEST_ASSERT_EQUAL_INT32(65450, a.value);
+    TEST_ASSERT_EQUAL_INT8(1, a.trend);
+    TEST_ASSERT_EQUAL(ScreenKind::Price, b.kind);
+    TEST_ASSERT_EQUAL(ScreenKind::World, c.kind);
+    TEST_ASSERT_EQUAL_INT32(4139, c.value);
+    TEST_ASSERT_EQUAL_INT8(-1, c.trend);
+    TEST_ASSERT_EQUAL(ScreenKind::Price, d.kind);
+    Frame f;
+    TEST_ASSERT_TRUE(renderScreen(f, c));
+}
+
+void test_mode2_without_world_shows_thai_only() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    GoldPrice p = samplePrice();
+    p.hasWorld = false;
+    t.onFetchSuccess(p, 0);
+    for (uint32_t ms = 0; ms < 24000; ms += 500)
+        TEST_ASSERT_EQUAL(ScreenKind::Price, screenFor(t, ms, kNow, DisplayMode::ThaiWorld).kind);
+}
+
+void test_ornament_option() {
+    ScreenInput in;
+    in.hasPrice = true;
+    in.price = samplePrice();
+    in.fresh = true;
+    in.mode = DisplayMode::SellOnly;
+    in.useOrnament = true;
+    TEST_ASSERT_EQUAL_INT32(66250, selectScreen(in).value);
+    in.price.hasOrnament = false;  // not available -> falls back to bar
+    TEST_ASSERT_EQUAL_INT32(65450, selectScreen(in).value);
+}
+
+void test_trend_can_be_disabled() {
+    ScreenInput in;
+    in.hasPrice = true;
+    in.price = samplePrice();
+    in.fresh = true;
+    in.mode = DisplayMode::SellOnly;
+    in.showTrend = false;
+    TEST_ASSERT_EQUAL_INT8(0, selectScreen(in).trend);
+}
+
+void test_trend_fallback_when_api_has_no_history() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    GoldPrice p = samplePrice();
+    p.hasTrend = false;
+    p.trend = 0;
+    t.onFetchSuccess(p, 0);
+    TEST_ASSERT_EQUAL_INT8(0, t.price().trend);  // nothing to compare yet
+    p.sellBar += 100;
+    p.buyBar += 100;
+    t.onFetchSuccess(p, 60000);
+    TEST_ASSERT_EQUAL_INT8(1, t.price().trend);
+    t.onFetchSuccess(p, 120000);  // same price: keep last direction
+    TEST_ASSERT_EQUAL_INT8(1, t.price().trend);
+    p.sellBar -= 50;
+    p.buyBar -= 50;
+    t.onFetchSuccess(p, 180000);
+    TEST_ASSERT_EQUAL_INT8(-1, t.price().trend);
+}
+
+void test_world_change_alone_does_not_write_flash() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    t.onFetchSuccess(samplePrice(), 0);
+    t.markPersisted();
+    GoldPrice p = samplePrice();
+    p.worldSpot += 7;
+    t.onFetchSuccess(p, 60000);
+    TEST_ASSERT_FALSE(t.needsPersist());
+    TEST_ASSERT_EQUAL_INT32(4146, t.price().worldSpot);  // but it is displayed
+}
+
+void test_setup_portal_screen() {
+    ScreenInput in;
+    in.setupPortal = true;
+    in.hasPrice = true;
+    in.price = samplePrice();
+    Screen s = selectScreen(in);
+    TEST_ASSERT_EQUAL(ScreenKind::Setup, s.kind);
+    Frame f;
+    TEST_ASSERT_TRUE(renderScreen(f, s));
+}
+
+void test_night_dimming() {
+    BrightnessPolicy b;  // day 1, night 0, 22:00-06:00, UTC+7
+    // 2026-11-05 04:26 UTC = 11:26 Thai -> day
+    TEST_ASSERT_EQUAL(11, localHour(kAnnounced, b.utcOffsetSec));
+    TEST_ASSERT_EQUAL_UINT8(1, intensityFor(kAnnounced, b));
+    // 15:30 UTC = 22:30 Thai -> night
+    const int64_t day0 = kAnnounced - (4 * 3600 + 26 * 60);  // 00:00 UTC
+    TEST_ASSERT_EQUAL_UINT8(0, intensityFor(day0 + 15 * 3600 + 30 * 60, b));
+    // 22:59 UTC = 05:59 Thai next day -> night ; 23:00 UTC = 06:00 -> day
+    TEST_ASSERT_EQUAL_UINT8(0, intensityFor(day0 + 22 * 3600 + 59 * 60, b));
+    TEST_ASSERT_EQUAL_UINT8(1, intensityFor(day0 + 23 * 3600, b));
+    // 14:59 UTC = 21:59 Thai -> day ; 15:00 UTC = 22:00 -> night
+    TEST_ASSERT_EQUAL_UINT8(1, intensityFor(day0 + 14 * 3600 + 59 * 60, b));
+    TEST_ASSERT_EQUAL_UINT8(0, intensityFor(day0 + 15 * 3600, b));
+    // clock unknown -> day brightness
+    TEST_ASSERT_EQUAL_UINT8(1, intensityFor(0, b));
+    // non-wrapping window and disabled window
+    TEST_ASSERT_TRUE(isNightHour(2, 1, 5));
+    TEST_ASSERT_FALSE(isNightHour(5, 1, 5));
+    TEST_ASSERT_FALSE(isNightHour(3, 4, 4));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_boot_shows_dashes_without_data);
@@ -270,5 +397,13 @@ int main(int, char**) {
     RUN_TEST(test_millis_rollover);
     RUN_TEST(test_mode_b_alternates_sell_and_buy);
     RUN_TEST(test_render_screen_never_fails_for_known_states);
+    RUN_TEST(test_mode2_thai_then_world);
+    RUN_TEST(test_mode2_without_world_shows_thai_only);
+    RUN_TEST(test_ornament_option);
+    RUN_TEST(test_trend_can_be_disabled);
+    RUN_TEST(test_trend_fallback_when_api_has_no_history);
+    RUN_TEST(test_world_change_alone_does_not_write_flash);
+    RUN_TEST(test_setup_portal_screen);
+    RUN_TEST(test_night_dimming);
     return UNITY_END();
 }
