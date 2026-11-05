@@ -12,9 +12,13 @@ const Font* fontForLength(int length) {
 }
 
 int textWidth(const Font& font, const char* text) {
-    int n = (int)strlen(text);
-    if (n == 0) return 0;
-    return n * font.width + (n - 1) * kGlyphSpacing;
+    int w = 0;
+    int n = 0;
+    for (const char* p = text; *p; ++p, ++n) {
+        const Glyph* g = font.find(*p);
+        w += g ? font.glyphWidth(*g) : font.width;
+    }
+    return n == 0 ? 0 : w + (n - 1) * kGlyphSpacing;
 }
 
 bool drawText(Frame& frame, const Font& font, const char* text, int x, int y) {
@@ -23,16 +27,17 @@ bool drawText(Frame& frame, const Font& font, const char* text, int x, int y) {
     for (const char* p = text; *p; ++p) {
         const Glyph* g = font.find(*p);
         if (!g) return false;
+        const int gw = font.glyphWidth(*g);
         for (int gy = 0; gy < font.height; ++gy) {
-            for (int gx = 0; gx < font.width; ++gx) {
+            for (int gx = 0; gx < gw; ++gx) {
                 if (font.pixel(*g, gx, gy)) frame.set(cx + gx, y + gy, true);
             }
         }
         // Even blank glyph cells must fit inside the frame.
-        if (!Frame::inBounds(cx, y) || !Frame::inBounds(cx + font.width - 1, y + font.height - 1)) {
+        if (!Frame::inBounds(cx, y) || !Frame::inBounds(cx + gw - 1, y + font.height - 1)) {
             ++frame.clipped;
         }
-        cx += font.width + kGlyphSpacing;
+        cx += gw + kGlyphSpacing;
     }
     return frame.clipped == clippedBefore;
 }
@@ -104,15 +109,38 @@ RenderResult renderPrice(Frame& frame, int32_t price, PriceMarker marker, bool s
     return decorate(frame, renderCenteredText(frame, digits), marker, staleUnderline, trend);
 }
 
+// Dollar sign, 3 px wide and 7 px tall (rows 0..6): the stems poke out
+// above and below the S, which makes it read as "$" at a glance.
+static const char* const kDollar[7] = {".#.", "###", "#..", "###", "..#", "###", ".#."};
+static constexpr int kDollarWidth = 3;
+
 RenderResult renderWorldPrice(Frame& frame, int32_t usd, bool staleUnderline, int8_t trend) {
     frame.clear();
     RenderResult r = {false, 0, 0};
     if (usd < 0 || usd > 99999) return r;
-    char text[13];
-    text[0] = '$';
-    if (formatPrice(usd, text + 1, sizeof(text) - 1) == 0) return r;
-    return decorate(frame, renderCenteredText(frame, text), PriceMarker::None, staleUnderline,
-                    trend);
+    char digits[12];
+    if (formatPrice(usd, digits, sizeof(digits)) == 0) return r;
+
+    // "$" + gap 2 + digits in the 4x6 font; keep column 28 free for the arrow.
+    const Font* font = &FONT_4X6;
+    int gap = 2;
+    int block = kDollarWidth + gap + textWidth(*font, digits);
+    if (block > 26) {  // 5-digit world price: fall back to the narrow font
+        font = &FONT_3X6;
+        gap = 1;
+        block = kDollarWidth + gap + textWidth(*font, digits);
+    }
+    if (block > Frame::kWidth) return r;
+    r.x = (Frame::kWidth - block) / 2;
+    r.width = block;
+    for (int y = 0; y < 7; ++y)
+        for (int x = 0; x < kDollarWidth; ++x)
+            if (kDollar[y][x] == '#') frame.set(r.x + x, y);
+    if (!drawText(frame, *font, digits, r.x + kDollarWidth + gap, kGlyphTop)) return r;
+    r.ok = true;
+    // No arrow if it would touch the digits (only for very wide numbers).
+    const bool roomForArrow = r.x + r.width <= 28;
+    return decorate(frame, r, PriceMarker::None, staleUnderline, roomForArrow ? trend : 0);
 }
 
 }  // namespace gold

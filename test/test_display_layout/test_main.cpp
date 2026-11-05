@@ -34,7 +34,7 @@ static std::string glyphArt(const Font& font, char c) {
     std::string s;
     if (!g) return s;
     for (int y = 0; y < font.height; ++y) {
-        for (int x = 0; x < font.width; ++x) s += font.pixel(*g, x, y) ? '#' : '.';
+        for (int x = 0; x < font.glyphWidth(*g); ++x) s += font.pixel(*g, x, y) ? '#' : '.';
         s += '\n';
     }
     return s;
@@ -53,13 +53,13 @@ static std::string frameArt(const Frame& f) {
 
 static const char* kExpected4x6[10] = {
     ".##.\n#..#\n#..#\n#..#\n#..#\n.##.\n",  // 0
-    ".#..\n##..\n.#..\n.#..\n.#..\n###.\n",  // 1
+    ".#.\n##.\n.#.\n.#.\n.#.\n###\n",        // 1 (narrow, 3 px)
     ".##.\n#..#\n...#\n..#.\n.#..\n####\n",  // 2
     "###.\n...#\n.##.\n...#\n...#\n###.\n",  // 3
     "#..#\n#..#\n#..#\n####\n...#\n...#\n",  // 4
     "####\n#...\n###.\n...#\n...#\n###.\n",  // 5
     ".##.\n#...\n###.\n#..#\n#..#\n.##.\n",  // 6
-    "####\n...#\n..#.\n.#..\n.#..\n.#..\n",  // 7
+    "####\n...#\n..#.\n..#.\n.#..\n.#..\n",  // 7
     ".##.\n#..#\n.##.\n#..#\n#..#\n.##.\n",  // 8
     ".##.\n#..#\n#..#\n.###\n...#\n.##.\n",  // 9
 };
@@ -100,7 +100,7 @@ void test_fonts_have_no_unused_bits() {
     for (const Font* f : fonts) {
         for (size_t i = 0; i < f->count; ++i)
             for (int y = 0; y < 6; ++y)
-                TEST_ASSERT_EQUAL_MESSAGE(0, f->glyphs[i].rows[y] >> f->width,
+                TEST_ASSERT_EQUAL_MESSAGE(0, f->glyphs[i].rows[y] >> f->glyphWidth(f->glyphs[i]),
                                           "glyph has bits outside its width");
     }
 }
@@ -114,6 +114,20 @@ void test_digits_are_distinct() {
 }
 
 // --------------------------------------------------------------- layout ----
+
+void test_narrow_one_keeps_spacing_even() {
+    // 71150: 7(4) 1(3) 1(3) 5(4) 0(4) + 4 gaps = 22 px, centred at x=5
+    Frame f;
+    RenderResult r = renderPrice(f, 71150);
+    TEST_ASSERT_TRUE(r.ok);
+    TEST_ASSERT_EQUAL(22, r.width);
+    TEST_ASSERT_EQUAL(5, r.x);
+    // every glyph is followed by exactly one empty column
+    const int gapCols[] = {9, 13, 17, 22};
+    for (int c : gapCols)
+        for (int y = 0; y < 8; ++y) TEST_ASSERT_FALSE(f.get(c, y));
+    TEST_ASSERT_EQUAL(0, f.clipped);
+}
 
 void test_five_digits_layout() {
     Frame f;
@@ -335,12 +349,23 @@ void test_arrow_fits_with_six_digits_and_markers() {
 
 void test_world_price_layout() {
     Frame f;
-    RenderResult r = renderWorldPrice(f, 4139, false, 1);
+    RenderResult r = renderWorldPrice(f, 4038, false, 1);
     TEST_ASSERT_TRUE(r.ok);
-    TEST_ASSERT_EQUAL(24, r.width);  // "$4139" = 5 chars in 4x6
+    TEST_ASSERT_EQUAL(24, r.width);  // $ (3) + gap 2 + "4038" (19)
     TEST_ASSERT_EQUAL(4, r.x);
-    TEST_ASSERT_TRUE(rowEmpty(f, 0));
+    TEST_ASSERT_EQUAL(0, f.clipped);
+    // tall "$" at columns 4-6, rows 0-6: stems above and below the S
+    const char* dollar[7] = {".#.", "###", "#..", "###", "..#", "###", ".#."};
+    for (int y = 0; y < 7; ++y)
+        for (int x = 0; x < 3; ++x) TEST_ASSERT_EQUAL(dollar[y][x] == '#', f.get(4 + x, y));
+    // only the $ stem uses row 0; row 7 stays free for the stale underline
+    TEST_ASSERT_EQUAL_UINT32(1u << 5, f.rows[0]);
     TEST_ASSERT_TRUE(rowEmpty(f, 7));
+    // gap of 2 empty columns between $ and digits
+    for (int y = 0; y < 8; ++y) TEST_ASSERT_FALSE(f.get(7, y) || f.get(8, y));
+    TEST_ASSERT_TRUE(f.get(30, 1));       // up arrow present
+    TEST_ASSERT_TRUE(f.get(27, 2));       // digits end at column 27 ('8')
+    for (int y = 0; y < 8; ++y) TEST_ASSERT_FALSE(f.get(28, y));
     Frame g;
     TEST_ASSERT_TRUE(renderWorldPrice(g, 10250).ok);  // "$10250" -> 3x6 font
     TEST_ASSERT_EQUAL(0, g.clipped);
@@ -349,7 +374,7 @@ void test_world_price_layout() {
 }
 
 void test_dollar_and_letters_exist() {
-    const char* chars = "$AP";
+    const char* chars = "AP";
     for (const char* c = chars; *c; ++c) {
         TEST_ASSERT_NOT_NULL(FONT_4X6.find(*c));
         TEST_ASSERT_NOT_NULL(FONT_3X6.find(*c));
@@ -364,6 +389,7 @@ int main(int, char**) {
     RUN_TEST(test_font_3x6_all_digits_match_design);
     RUN_TEST(test_fonts_have_no_unused_bits);
     RUN_TEST(test_digits_are_distinct);
+    RUN_TEST(test_narrow_one_keeps_spacing_even);
     RUN_TEST(test_five_digits_layout);
     RUN_TEST(test_five_digits_exact_pixels);
     RUN_TEST(test_six_digits_layout);

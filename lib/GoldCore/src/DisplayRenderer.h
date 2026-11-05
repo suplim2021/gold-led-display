@@ -1,7 +1,8 @@
 // Turns prices / status codes into a 32x8 Frame.
 //
 // Layout rules (see README):
-//   * 1..5 characters -> FONT_4X6, 1 px spacing. 5 digits = 24 px, margins 4/4.
+//   * 1..5 characters -> FONT_4X6, 1 px spacing. 5 digits = 24 px, margins 4/4
+//     (narrow '1' is 3 px, so prices with 1s are a bit narrower, still centred).
 //   * 6 characters    -> FONT_3X6, 1 px spacing. 6 digits = 23 px, margins 4/5.
 //   * Glyphs occupy rows 1..6, leaving row 0 and row 7 blank (1 px margin).
 //   * Horizontal start x = (32 - width) / 2 (rounded down).
@@ -13,7 +14,7 @@
 //   * Trend up    : small triangle, columns 29-31, rows 1-2 (top-right)
 //   * Trend down  : small triangle, columns 29-31, rows 5-6 (bottom-right)
 //     (direction is encoded by both shape and position)
-// World price is drawn as "$" + digits, e.g. "$4132".
+// World price is drawn as a tall "$" (rows 0-6) + digits, e.g. "$4132".
 #pragma once
 
 #include <stdint.h>
