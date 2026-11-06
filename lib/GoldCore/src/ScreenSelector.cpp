@@ -31,12 +31,25 @@ Screen selectScreen(const ScreenInput& in, const ScreenTiming& t) {
         const bool showBuy = ((in.nowMs / t.alternatePeriodMs) % 2) == 1;
         s.marker = showBuy ? PriceMarker::Buy : PriceMarker::Sell;
         s.value = showBuy ? buy : sell;
-    } else if (in.mode == DisplayMode::ThaiWorld && in.price.hasWorld && t.worldShowMs > 0) {
-        const uint32_t cycle = t.thaiShowMs + t.worldShowMs;
-        if ((in.nowMs % cycle) >= t.thaiShowMs) {
+    } else if (in.mode == DisplayMode::ThaiWorld) {
+        const GoldPrice& p = in.price;
+        const uint32_t worldMs = p.hasWorld ? t.worldShowMs : 0;
+        const uint32_t timeMs = p.hasAnnouncedTime() ? t.timeShowMs : 0;
+        const uint32_t dateMs = p.hasAnnouncedTime() && p.hasAnnouncedDate() ? t.dateShowMs : 0;
+        const uint32_t cycle = t.thaiShowMs + worldMs + dateMs + timeMs;
+        const uint32_t phase = cycle > 0 ? in.nowMs % cycle : 0;
+        if (phase >= t.thaiShowMs + worldMs + dateMs) {
+            s.kind = ScreenKind::Time;
+            s.value = p.announcedMinute;
+            s.trend = 0;
+        } else if (phase >= t.thaiShowMs + worldMs) {
+            s.kind = ScreenKind::Date;
+            s.value = p.announcedDay * 100 + p.announcedMonth;
+            s.trend = 0;
+        } else if (phase >= t.thaiShowMs) {
             s.kind = ScreenKind::World;
-            s.value = in.price.worldSpot;
-            s.trend = in.showTrend ? in.price.worldTrend : 0;
+            s.value = p.worldSpot;
+            s.trend = in.showTrend ? p.worldTrend : 0;
         }
     }
 
@@ -67,6 +80,14 @@ bool renderScreen(Frame& frame, const Screen& screen) {
             break;
         case ScreenKind::World:
             if (renderWorldPrice(frame, screen.value, screen.stale, screen.trend).ok) return true;
+            break;
+        case ScreenKind::Date:
+            if (renderDate(frame, screen.value / 100, screen.value % 100, screen.stale).ok) {
+                return true;
+            }
+            break;
+        case ScreenKind::Time:
+            if (renderTimeOfDay(frame, screen.value, screen.stale).ok) return true;
             break;
     }
     renderCenteredText(frame, "------");

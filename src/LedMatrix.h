@@ -17,6 +17,10 @@ public:
 
     bool begin(uint8_t intensity);
     void setIntensity(uint8_t intensity);
+    // Rewrites every MAX7219 config register. They are otherwise written only
+    // once, so a glitch could leave the panel blank until the next reboot.
+    // Follow with show(frame, true) to rewrite the pixels too.
+    void refreshHardware(uint8_t intensity);
     // Sends the frame only if it differs from what is already displayed.
     void show(const gold::Frame& frame, bool force = false);
 

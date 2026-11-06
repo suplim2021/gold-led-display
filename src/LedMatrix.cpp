@@ -11,6 +11,16 @@ void LedMatrix::setIntensity(uint8_t intensity) {
     mx_.control(MD_MAX72XX::INTENSITY, intensity > 15 ? 15 : intensity);
 }
 
+void LedMatrix::refreshHardware(uint8_t intensity) {
+    // Same registers and order as MD_MAX72XX::begin(), which must not be called
+    // again because it allocates memory on every call.
+    mx_.control(MD_MAX72XX::TEST, MD_MAX72XX::OFF);
+    mx_.control(MD_MAX72XX::SCANLIMIT, ROW_SIZE - 1);
+    mx_.control(MD_MAX72XX::INTENSITY, intensity > 15 ? 15 : intensity);
+    mx_.control(MD_MAX72XX::DECODE, MD_MAX72XX::OFF);
+    mx_.control(MD_MAX72XX::SHUTDOWN, MD_MAX72XX::OFF);
+}
+
 void LedMatrix::show(const gold::Frame& frame, bool force) {
     if (!force && hasShown_ && frame == shown_) return;
     const uint16_t cols = mx_.getColumnCount();

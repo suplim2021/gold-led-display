@@ -5,12 +5,11 @@
 #include "PriceTracker.h"  // backoffDelayMs
 
 void WifiLink::begin(const char* hostname, const char* apName, const char* apPassword,
-                     uint32_t retryBaseMs, uint32_t retryMaxMs, uint32_t portalTimeoutSec) {
+                     uint32_t retryBaseMs, uint32_t retryMaxMs) {
     apName_ = apName;
     apPassword_ = apPassword;
     retryBaseMs_ = retryBaseMs;
     retryMaxMs_ = retryMaxMs;
-    portalTimeoutSec_ = portalTimeoutSec;
 
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(hostname);
@@ -20,23 +19,31 @@ void WifiLink::begin(const char* hostname, const char* apName, const char* apPas
     wm_.setConnectTimeout(20);
     wm_.setHostname(hostname);
     wm_.setTitle("Gold LED");
-    wm_.setShowInfoUpdate(false);  // no firmware upload through the portal page
+    wm_.setShowInfoUpdate(false);  // only hides the button, see blockFirmwareUpload()
+    wm_.setWebServerCallback([this]() { blockFirmwareUpload(); });
+    wm_.setConfigPortalTimeout(0);  // the portal only opens when setup is needed
 
     const bool saved = wm_.getWiFiIsSaved();
-    // With a saved network the portal only stays open for a while (e.g. router
-    // was off at boot); without one it waits until you configure it.
-    wm_.setConfigPortalTimeout(saved ? portalTimeoutSec_ : 0);
     Serial.printf("[wifi] saved network: %s\n", saved ? "yes" : "no");
-    if (wm_.autoConnect(apName_, apPassword_)) {
-        Serial.println("[wifi] connected");
-    } else {
+    if (saved) {
+        WiFi.begin();  // never opens the portal; loop() keeps retrying
+    } else if (!wm_.autoConnect(apName_, apPassword_)) {
         Serial.printf("[wifi] setup portal open: AP '%s'\n", apName_);
     }
     nextAttemptMs_ = millis() + retryBaseMs_;
 }
 
+// WiFiManager always registers its firmware upload routes, and they do not ask
+// for the OTA password. WebServer uses the first handler that matches, and this
+// callback runs before WiFiManager adds its own, so these take over both routes.
+// No upload callback is passed, so uploaded data never reaches the Update code.
+void WifiLink::blockFirmwareUpload() {
+    const auto reject = [this]() { wm_.server->send(404, "text/plain", "Not found"); };
+    wm_.server->on(WM_G(R_update), HTTP_ANY, reject);
+    wm_.server->on(WM_G(R_updatedone), HTTP_ANY, reject);
+}
+
 void WifiLink::openPortal() {
-    wm_.setConfigPortalTimeout(wm_.getWiFiIsSaved() ? portalTimeoutSec_ : 0);
     wm_.startConfigPortal(apName_, apPassword_);
     Serial.printf("[wifi] setup portal open: AP '%s'\n", apName_);
 }

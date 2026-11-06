@@ -35,6 +35,10 @@ public:
     void onFetchFailure(Fault f, uint32_t nowMs);
     void setWifiConnected(bool connected) { wifiConnected_ = connected; }
 
+    // Call regularly: latches "too old" so that a millis() wrap (49.7 days
+    // without a successful fetch) cannot make an old price look fresh again.
+    void tick(uint32_t nowMs);
+
     bool hasPrice() const { return hasPrice_; }
     const GoldPrice& price() const { return price_; }
 
@@ -58,6 +62,7 @@ private:
     GoldPrice price_;
     bool hasPrice_ = false;
     bool fetchedThisSession_ = false;
+    bool fetchWindowOpen_ = false;
     bool dirty_ = false;
     bool wifiConnected_ = false;
     uint32_t lastSuccessMs_ = 0;

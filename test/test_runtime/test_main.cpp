@@ -3,9 +3,15 @@
 // (Logic only - the real Wi-Fi / flash are exercised on hardware.)
 #include <unity.h>
 
+#include <string.h>
+
+#include <initializer_list>
+
 #include "Brightness.h"
+#include "JsonEndDetector.h"
 #include "PriceTracker.h"
 #include "ScreenSelector.h"
+#include "Timing.h"
 
 using namespace gold;
 
@@ -229,6 +235,113 @@ void test_millis_rollover() {
     TEST_ASSERT_FALSE(t.isFresh(nearWrap + 200000u, kNow));
 }
 
+void test_stale_price_is_not_revived_by_full_millis_cycle() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    t.onFetchSuccess(samplePrice(), 1000u);
+    t.tick(1000u + 200000u);  // the 3-minute window has closed
+    // 2^32 ms later the same millis() value recurs and the age looks small.
+    TEST_ASSERT_FALSE(t.isFresh(1000u + 60000u, kNow));
+    t.onFetchSuccess(samplePrice(), 1000u + 60000u);  // a real fetch reopens it
+    TEST_ASSERT_TRUE(t.isFresh(1000u + 60001u, kNow));
+}
+
+// ------------------------------------------------------- one-shot timer ----
+
+void test_one_shot_never_started_stays_off_at_any_uptime() {
+    OneShotTimer timer;
+    TEST_ASSERT_FALSE(timer.active(0u));
+    TEST_ASSERT_FALSE(timer.active(0x7FFFFFFFu));
+    TEST_ASSERT_FALSE(timer.active(0x80000001u));  // 24.86 days: the old banner bug
+    TEST_ASSERT_FALSE(timer.active(0xFFFFFFFFu));
+}
+
+void test_one_shot_expires_and_stays_off() {
+    OneShotTimer timer;
+    timer.start(1000u, 1500u);
+    TEST_ASSERT_TRUE(timer.active(1000u));
+    TEST_ASSERT_TRUE(timer.active(2499u));
+    TEST_ASSERT_FALSE(timer.active(2500u));
+    TEST_ASSERT_FALSE(timer.active(2500u + 0x80000000u));  // old press must not return
+    TEST_ASSERT_FALSE(timer.active(1000u));                // not even at the same millis()
+}
+
+void test_one_shot_works_across_millis_wrap() {
+    OneShotTimer timer;
+    const uint32_t nearWrap = 0xFFFFFF00u;
+    timer.start(nearWrap, 1500u);
+    TEST_ASSERT_TRUE(timer.active(nearWrap + 1000u));  // wrapped past zero
+    TEST_ASSERT_FALSE(timer.active(nearWrap + 1500u));
+}
+
+// -------------------------------------------------------- transfer guard ---
+
+void test_transfer_guard_times_out_even_when_data_trickles() {
+    TransferGuard guard(1000u, 30000u, 32768u);
+    TEST_ASSERT_EQUAL(TransferState::Ok, guard.onBytes(10, 1000u));
+    TEST_ASSERT_EQUAL(TransferState::Ok, guard.onBytes(10, 30999u));
+    TEST_ASSERT_EQUAL(TransferState::TimedOut, guard.onBytes(10, 31000u));
+}
+
+void test_transfer_guard_times_out_when_no_data_arrives() {
+    TransferGuard guard(1000u, 30000u, 32768u);
+    TEST_ASSERT_EQUAL(TransferState::Ok, guard.check(30999u));
+    TEST_ASSERT_EQUAL(TransferState::TimedOut, guard.check(31000u));
+}
+
+void test_transfer_guard_limits_total_bytes() {
+    TransferGuard guard(0u, 30000u, 100u);
+    TEST_ASSERT_EQUAL(TransferState::Ok, guard.onBytes(60, 1u));
+    TEST_ASSERT_EQUAL(TransferState::Ok, guard.onBytes(40, 2u));  // exactly the limit
+    TEST_ASSERT_EQUAL(TransferState::TooLarge, guard.onBytes(1, 3u));
+    TEST_ASSERT_EQUAL(101u, guard.bytes());
+}
+
+void test_transfer_guard_works_across_millis_wrap() {
+    const uint32_t nearWrap = 0xFFFFFF00u;
+    TransferGuard guard(nearWrap, 30000u, 100u);
+    TEST_ASSERT_EQUAL(TransferState::Ok, guard.check(nearWrap + 29999u));
+    TEST_ASSERT_EQUAL(TransferState::TimedOut, guard.check(nearWrap + 30000u));
+}
+
+// ------------------------------------------------------ JSON end detector ---
+
+static bool jsonComplete(const char* text) {
+    JsonEndDetector d;
+    return d.feed(text, strlen(text));
+}
+
+void test_json_end_detects_complete_and_truncated_bodies() {
+    TEST_ASSERT_TRUE(jsonComplete("{}"));
+    TEST_ASSERT_TRUE(jsonComplete(" \r\n{\"a\":[1,{\"b\":2}],\"c\":3}"));
+    TEST_ASSERT_FALSE(jsonComplete(""));
+    TEST_ASSERT_FALSE(jsonComplete("{\"a\":1"));
+    TEST_ASSERT_FALSE(jsonComplete("{\"a\":[1,{\"b\":2}]"));
+}
+
+void test_json_end_ignores_brackets_inside_strings() {
+    TEST_ASSERT_FALSE(jsonComplete("{\"a\":\"}\""));
+    TEST_ASSERT_FALSE(jsonComplete("{\"a\":\"\\\"}\""));  // escaped quote stays in the string
+    TEST_ASSERT_TRUE(jsonComplete("{\"a\":\"\\\\\"}"));   // escaped backslash ends it
+}
+
+void test_json_end_works_across_read_boundaries() {
+    const char* text = "{\"a\":\"x\\\"}\",\"b\":[1]}";
+    const size_t n = strlen(text);
+    for (size_t split = 1; split < n; ++split) {
+        JsonEndDetector d;
+        TEST_ASSERT_FALSE(d.feed(text, split));
+        TEST_ASSERT_TRUE(d.feed(text + split, n - split));
+    }
+}
+
+void test_json_end_stays_complete_when_more_data_follows() {
+    JsonEndDetector d;
+    TEST_ASSERT_TRUE(d.feed("{}", 2));
+    TEST_ASSERT_TRUE(d.feed("{", 1));
+    TEST_ASSERT_TRUE(d.complete());
+}
+
 // ------------------------------------------------------------- modes ------
 
 void test_mode_b_alternates_sell_and_buy() {
@@ -264,11 +377,11 @@ void test_mode2_thai_then_world() {
     PriceTracker t;
     t.setWifiConnected(true);
     t.onFetchSuccess(samplePrice(), 0);
-    // default timing: Thai 8 s, world 4 s
+    // default timing: Thai 10 s, world 4 s (this price has no announcement time)
     Screen a = screenFor(t, 1000, kNow, DisplayMode::ThaiWorld);
-    Screen b = screenFor(t, 7900, kNow, DisplayMode::ThaiWorld);
-    Screen c = screenFor(t, 9000, kNow, DisplayMode::ThaiWorld);
-    Screen d = screenFor(t, 12500, kNow, DisplayMode::ThaiWorld);
+    Screen b = screenFor(t, 9900, kNow, DisplayMode::ThaiWorld);
+    Screen c = screenFor(t, 11000, kNow, DisplayMode::ThaiWorld);
+    Screen d = screenFor(t, 14500, kNow, DisplayMode::ThaiWorld);
     TEST_ASSERT_EQUAL(ScreenKind::Price, a.kind);
     TEST_ASSERT_EQUAL_INT32(65450, a.value);
     TEST_ASSERT_EQUAL_INT8(1, a.trend);
@@ -279,6 +392,118 @@ void test_mode2_thai_then_world() {
     TEST_ASSERT_EQUAL(ScreenKind::Price, d.kind);
     Frame f;
     TEST_ASSERT_TRUE(renderScreen(f, c));
+}
+
+static GoldPrice announcedPrice(uint8_t day, uint8_t month) {
+    GoldPrice p = samplePrice();
+    p.announcedMinute = 10 * 60 + 46;
+    p.announcedDay = day;
+    p.announcedMonth = month;
+    return p;
+}
+
+void test_mode2_cycle_shows_announcement_date_then_time() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    t.onFetchSuccess(announcedPrice(6, 11), 0);
+    const auto at = [&](uint32_t ms) { return screenFor(t, ms, kNow, DisplayMode::ThaiWorld); };
+    TEST_ASSERT_EQUAL(ScreenKind::Price, at(1000).kind);
+    TEST_ASSERT_EQUAL(ScreenKind::Price, at(9999).kind);
+    TEST_ASSERT_EQUAL(ScreenKind::World, at(10000).kind);
+    TEST_ASSERT_EQUAL(ScreenKind::Date, at(14000).kind);
+    TEST_ASSERT_EQUAL_INT32(611, at(14000).value);
+    TEST_ASSERT_EQUAL_INT8(0, at(14000).trend);
+    TEST_ASSERT_EQUAL(ScreenKind::Time, at(16000).kind);
+    TEST_ASSERT_EQUAL_INT32(646, at(16000).value);
+    TEST_ASSERT_EQUAL_INT8(0, at(16000).trend);
+    TEST_ASSERT_EQUAL(ScreenKind::Price, at(18000).kind);
+}
+
+void test_mode2_skips_date_when_unknown() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    t.onFetchSuccess(announcedPrice(0, 0), 0);
+    for (uint32_t ms = 0; ms < 40000; ms += 500)
+        TEST_ASSERT_NOT_EQUAL(ScreenKind::Date, screenFor(t, ms, kNow, DisplayMode::ThaiWorld).kind);
+    TEST_ASSERT_EQUAL(ScreenKind::Time, screenFor(t, 14000, kNow, DisplayMode::ThaiWorld).kind);
+    TEST_ASSERT_EQUAL(ScreenKind::Price, screenFor(t, 16000, kNow, DisplayMode::ThaiWorld).kind);
+}
+
+void test_announcement_pages_only_in_mode2() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    t.onFetchSuccess(announcedPrice(6, 11), 0);
+    for (uint32_t ms = 0; ms < 40000; ms += 500) {
+        for (DisplayMode m : {DisplayMode::SellOnly, DisplayMode::SellBuy}) {
+            const ScreenKind k = screenFor(t, ms, kNow, m).kind;
+            TEST_ASSERT_NOT_EQUAL(ScreenKind::Date, k);
+            TEST_ASSERT_NOT_EQUAL(ScreenKind::Time, k);
+        }
+    }
+}
+
+void test_announcement_pages_carry_stale_underline() {
+    PriceTracker t;
+    t.restore(announcedPrice(6, 11));  // from flash: stale
+    Screen s = screenFor(t, 14000, 0, DisplayMode::ThaiWorld);
+    TEST_ASSERT_EQUAL(ScreenKind::Date, s.kind);
+    TEST_ASSERT_TRUE(s.stale);
+    Frame f;
+    TEST_ASSERT_TRUE(renderScreen(f, s));
+    int dots = 0;
+    for (int x = 0; x < Frame::kWidth; ++x) dots += f.get(x, Frame::kHeight - 1) ? 1 : 0;
+    TEST_ASSERT_TRUE(dots > 0);
+}
+
+void test_every_date_and_time_fits_the_display() {
+    for (int month = 1; month <= 12; ++month) {
+        for (int day = 1; day <= 31; ++day) {
+            Frame f;
+            RenderResult r = renderDate(f, day, month, true);
+            TEST_ASSERT_TRUE(r.ok);
+            TEST_ASSERT_EQUAL(0, f.clipped);
+        }
+    }
+    for (int minute = 0; minute < 24 * 60; ++minute) {
+        Frame f;
+        RenderResult r = renderTimeOfDay(f, minute, true);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(0, f.clipped);
+    }
+}
+
+void test_invalid_date_and_time_are_rejected() {
+    Frame f;
+    TEST_ASSERT_FALSE(renderDate(f, 0, 11).ok);
+    TEST_ASSERT_FALSE(renderDate(f, 32, 11).ok);
+    TEST_ASSERT_FALSE(renderDate(f, 6, 13).ok);
+    TEST_ASSERT_FALSE(renderTimeOfDay(f, -1).ok);
+    TEST_ASSERT_FALSE(renderTimeOfDay(f, 24 * 60).ok);
+}
+
+void test_known_date_survives_response_without_date() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    t.onFetchSuccess(announcedPrice(6, 11), 0);
+    t.onFetchSuccess(announcedPrice(0, 0), 60000);  // same round, date unknown this time
+    TEST_ASSERT_EQUAL_UINT8(6, t.price().announcedDay);
+    TEST_ASSERT_EQUAL_UINT8(11, t.price().announcedMonth);
+    GoldPrice next = announcedPrice(0, 0);
+    next.announcedMinute = 11 * 60;  // a new round must not inherit the old date
+    t.onFetchSuccess(next, 120000);
+    TEST_ASSERT_EQUAL_UINT8(0, t.price().announcedDay);
+}
+
+void test_new_announcement_time_is_persisted() {
+    PriceTracker t;
+    t.onFetchSuccess(announcedPrice(6, 11), 0);
+    t.markPersisted();
+    t.onFetchSuccess(announcedPrice(6, 11), 60000);
+    TEST_ASSERT_FALSE(t.needsPersist());
+    GoldPrice next = announcedPrice(6, 11);
+    next.announcedMinute = 11 * 60;
+    t.onFetchSuccess(next, 120000);
+    TEST_ASSERT_TRUE(t.needsPersist());
 }
 
 void test_mode2_without_world_shows_thai_only() {
@@ -433,9 +658,29 @@ int main(int, char**) {
     RUN_TEST(test_stale_timestamp_reports_e4);
     RUN_TEST(test_future_timestamp_rejected);
     RUN_TEST(test_millis_rollover);
+    RUN_TEST(test_stale_price_is_not_revived_by_full_millis_cycle);
+    RUN_TEST(test_one_shot_never_started_stays_off_at_any_uptime);
+    RUN_TEST(test_one_shot_expires_and_stays_off);
+    RUN_TEST(test_one_shot_works_across_millis_wrap);
+    RUN_TEST(test_transfer_guard_times_out_even_when_data_trickles);
+    RUN_TEST(test_transfer_guard_times_out_when_no_data_arrives);
+    RUN_TEST(test_transfer_guard_limits_total_bytes);
+    RUN_TEST(test_transfer_guard_works_across_millis_wrap);
+    RUN_TEST(test_json_end_detects_complete_and_truncated_bodies);
+    RUN_TEST(test_json_end_ignores_brackets_inside_strings);
+    RUN_TEST(test_json_end_works_across_read_boundaries);
+    RUN_TEST(test_json_end_stays_complete_when_more_data_follows);
     RUN_TEST(test_mode_b_alternates_sell_and_buy);
     RUN_TEST(test_render_screen_never_fails_for_known_states);
     RUN_TEST(test_mode2_thai_then_world);
+    RUN_TEST(test_mode2_cycle_shows_announcement_date_then_time);
+    RUN_TEST(test_mode2_skips_date_when_unknown);
+    RUN_TEST(test_announcement_pages_only_in_mode2);
+    RUN_TEST(test_announcement_pages_carry_stale_underline);
+    RUN_TEST(test_every_date_and_time_fits_the_display);
+    RUN_TEST(test_invalid_date_and_time_are_rejected);
+    RUN_TEST(test_known_date_survives_response_without_date);
+    RUN_TEST(test_new_announcement_time_is_persisted);
     RUN_TEST(test_mode2_without_world_shows_thai_only);
     RUN_TEST(test_ornament_option);
     RUN_TEST(test_trend_can_be_disabled);

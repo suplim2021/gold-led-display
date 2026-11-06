@@ -21,6 +21,18 @@
 #ifndef OTA_LOCKOUT_MIN
 #define OTA_LOCKOUT_MIN 15
 #endif
+#ifndef DATE_SHOW_MS
+#define DATE_SHOW_MS 2000
+#endif
+#ifndef TIME_SHOW_MS
+#define TIME_SHOW_MS 2000
+#endif
+#ifndef LOOP_WATCHDOG_SEC
+#define LOOP_WATCHDOG_SEC 90
+#endif
+#ifndef DISPLAY_REFRESH_MS
+#define DISPLAY_REFRESH_MS 60000UL
+#endif
 #ifndef DISPLAY_DIN_PIN
 #define DISPLAY_DIN_PIN 23
 #endif

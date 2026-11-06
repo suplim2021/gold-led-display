@@ -11,6 +11,17 @@ int64_t daysFromCivil(int64_t y, unsigned m, unsigned d) {
     return era * 146097 + (int64_t)doe - 719468;
 }
 
+void monthDayFromDays(int64_t days, unsigned& month, unsigned& day) {
+    const int64_t z = days + 719468;
+    const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const unsigned doe = (unsigned)(z - era * 146097);
+    const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const unsigned mp = (5 * doy + 2) / 153;
+    day = doy - (153 * mp + 2) / 5 + 1;
+    month = mp < 10 ? mp + 3 : mp - 9;
+}
+
 static bool readDigits(const char*& p, int count, int& out) {
     out = 0;
     for (int i = 0; i < count; ++i) {

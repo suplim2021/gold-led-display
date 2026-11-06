@@ -1,4 +1,5 @@
 // API parser tests (run on PC: pio test -e native)
+#include <stdio.h>
 #include <string.h>
 #include <unity.h>
 
@@ -436,8 +437,116 @@ void test_trend_when_history_is_ahead_of_current() {
     TEST_ASSERT_FALSE(p.hasTrend);
 }
 
+// ----------------------------------------------- announcement rounds ------
+
+static std::string roundJson(const char* time, int sellOrn, int change) {
+    char buf[200];
+    snprintf(buf, sizeof(buf),
+             "{\"time\":\"%s\",\"buyBar\":%d,\"sellBar\":%d,\"buyOrnament\":%d.44,"
+             "\"sellOrnament\":%d,\"change\":%d}",
+             time, sellOrn - 1000, sellOrn - 800, sellOrn - 2300, sellOrn, change);
+    return buf;
+}
+
+static std::string withRounds(const char* updatedAt, int currentSellOrn,
+                              const std::string& rounds) {
+    char head[220];
+    snprintf(head, sizeof(head),
+             "{\"current\":{\"buyBar\":%d,\"sellBar\":%d,\"buyOrnament\":%d,"
+             "\"sellOrnament\":%d,\"updatedAt\":\"%s\"},\"history\":[",
+             currentSellOrn - 1000, currentSellOrn - 800, currentSellOrn - 2300, currentSellOrn,
+             updatedAt);
+    return std::string(head) + rounds + "]}";
+}
+
+void test_lagging_current_uses_latest_round() {
+    // Seen on the board 2026-11-06 10:42: current was still round 8 (65150)
+    // while round 11 (65000) had been announced at 10:36.
+    GoldPrice p;
+    const std::string rounds = roundJson("10:10", 65150, -50) + "," +
+                               roundJson("10:27", 65050, -50) + "," +
+                               roundJson("10:36", 65000, 50);
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(withRounds("2026-11-06T03:36:00.000Z", 65150, rounds), p));
+    TEST_ASSERT_EQUAL_INT32(65000, p.sellOrnament);
+    TEST_ASSERT_EQUAL_INT32(62700, p.buyOrnament);  // 62700.44 rounded
+    TEST_ASSERT_EQUAL_INT32(64200, p.sellBar);
+    TEST_ASSERT_EQUAL_INT32(64000, p.buyBar);
+    TEST_ASSERT_TRUE(p.hasTrend);
+    TEST_ASSERT_EQUAL_INT8(1, p.trend);
+    TEST_ASSERT_EQUAL_INT16(10 * 60 + 36, p.announcedMinute);
+    TEST_ASSERT_EQUAL_UINT8(6, p.announcedDay);
+    TEST_ASSERT_EQUAL_UINT8(11, p.announcedMonth);
+}
+
+void test_current_absent_from_history_is_kept_without_time() {
+    // E.g. early morning: today's price, while history may still be yesterday's.
+    GoldPrice p;
+    const std::string rounds = roundJson("17:30", 65000, -50);
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(withRounds("2026-11-07T02:00:00.000Z", 66000, rounds), p));
+    TEST_ASSERT_EQUAL_INT32(66000, p.sellOrnament);
+    TEST_ASSERT_FALSE(p.hasTrend);
+    TEST_ASSERT_FALSE(p.hasAnnouncedTime());
+    TEST_ASSERT_FALSE(p.hasAnnouncedDate());
+}
+
+void test_same_round_keeps_current_prices_and_adds_time() {
+    GoldPrice p;
+    const std::string rounds = roundJson("10:46", 64950, -50);
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(withRounds("2026-11-06T03:46:00.000Z", 64950, rounds), p));
+    TEST_ASSERT_EQUAL_INT32(64950 - 2300, p.buyOrnament);  // current's value, not rounded history
+    TEST_ASSERT_EQUAL_INT16(10 * 60 + 46, p.announcedMinute);
+    TEST_ASSERT_EQUAL_UINT8(6, p.announcedDay);
+}
+
+void test_server_time_in_updated_at_hides_only_the_date() {
+    // updatedAt was the request time in some responses, so it cannot date a round.
+    GoldPrice p;
+    const std::string rounds = roundJson("10:46", 64950, -50);
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(withRounds("2026-11-06T04:01:25.278Z", 64950, rounds), p));
+    TEST_ASSERT_EQUAL_INT16(10 * 60 + 46, p.announcedMinute);
+    TEST_ASSERT_FALSE(p.hasAnnouncedDate());
+}
+
+void test_announcement_date_uses_thai_time_zone() {
+    GoldPrice p;
+    const std::string rounds = roundJson("00:30", 64950, 50);
+    TEST_ASSERT_EQUAL(ParseError::Ok,  // 17:30 UTC on 30 Nov = 00:30 on 1 Dec in Thailand
+                      parseOrn(withRounds("2026-11-30T17:30:00Z", 64950, rounds), p));
+    TEST_ASSERT_EQUAL_UINT8(1, p.announcedDay);
+    TEST_ASSERT_EQUAL_UINT8(12, p.announcedMonth);
+}
+
+void test_bad_latest_round_keeps_current() {
+    const std::string first = roundJson("10:10", 65150, 50);
+    const std::string bad[] = {
+        roundJson("25:00", 65000, -50),  // impossible hour
+        roundJson("10:61", 65000, -50),  // impossible minute
+        roundJson("soon", 65000, -50),   // not a time
+        roundJson("10:36", 1, -50),      // implausible price
+    };
+    for (const std::string& last : bad) {
+        GoldPrice p;
+        TEST_ASSERT_EQUAL(ParseError::Ok, parseOrn(withRounds("2026-11-06T03:36:00Z", 65150,
+                                                              first + "," + last), p));
+        TEST_ASSERT_EQUAL_INT32(65150, p.sellOrnament);
+        TEST_ASSERT_FALSE(p.hasAnnouncedTime());
+        TEST_ASSERT_TRUE(p.hasTrend);  // still from the round matching the displayed price
+        TEST_ASSERT_EQUAL_INT8(1, p.trend);
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_lagging_current_uses_latest_round);
+    RUN_TEST(test_current_absent_from_history_is_kept_without_time);
+    RUN_TEST(test_same_round_keeps_current_prices_and_adds_time);
+    RUN_TEST(test_server_time_in_updated_at_hides_only_the_date);
+    RUN_TEST(test_announcement_date_uses_thai_time_zone);
+    RUN_TEST(test_bad_latest_round_keeps_current);
     RUN_TEST(test_live_response_captured_from_api);
     RUN_TEST(test_documented_sample_response);
     RUN_TEST(test_live_response_2_ornament_primary);

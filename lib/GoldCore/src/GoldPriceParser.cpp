@@ -92,7 +92,38 @@ static bool readRounded(JsonVariantConst v, int32_t& out) {
 
 static constexpr size_t kTrendLookback = 3;
 
+static constexpr int64_t kThaiUtcOffsetSec = 7 * 3600;  // history[].time is Thai time
+
 static int8_t signOf(int32_t v) { return v > 0 ? 1 : (v < 0 ? -1 : 0); }
+
+// "HH:MM" -> minutes since midnight, -1 if malformed.
+static int clockMinutes(const char* text) {
+    if (!text) return -1;
+    const char* p = text;
+    int hour = 0;
+    int digits = 0;
+    for (; *p >= '0' && *p <= '9' && digits < 3; ++p, ++digits) hour = hour * 10 + (*p - '0');
+    if (digits < 1 || digits > 2 || hour > 23 || *p != ':') return -1;
+    ++p;
+    if (p[0] < '0' || p[0] > '9' || p[1] < '0' || p[1] > '9' || p[2] != '\0') return -1;
+    const int minute = (p[0] - '0') * 10 + (p[1] - '0');
+    return minute > 59 ? -1 : hour * 60 + minute;
+}
+
+struct Round {
+    int32_t buyBar = 0, sellBar = 0, buyOrnament = 0, sellOrnament = 0;
+    int minute = -1;
+};
+
+// One history entry, usable only when its time and all four prices are valid.
+static bool readRound(JsonVariantConst e, Round& r) {
+    r.minute = clockMinutes(e["time"].as<const char*>());
+    return r.minute >= 0 && readRounded(e["buyBar"], r.buyBar) &&
+           readRounded(e["sellBar"], r.sellBar) && readRounded(e["buyOrnament"], r.buyOrnament) &&
+           readRounded(e["sellOrnament"], r.sellOrnament) && plausible(r.buyBar) &&
+           plausible(r.sellBar) && plausible(r.buyOrnament) && plausible(r.sellOrnament) &&
+           r.buyBar <= r.sellBar && r.buyOrnament <= r.sellOrnament;
+}
 
 ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out,
                               ThaiPrice primary) {
@@ -116,7 +147,10 @@ ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out,
     filter["current"]["sellOrnament"] = true;
     filter["current"]["updatedAt"] = true;
     filter["current"]["change"] = true;
-    filter["history"][0]["sellBar"] = true;  // [0] = applies to every element
+    filter["history"][0]["time"] = true;  // [0] = applies to every element
+    filter["history"][0]["buyBar"] = true;
+    filter["history"][0]["sellBar"] = true;
+    filter["history"][0]["buyOrnament"] = true;
     filter["history"][0]["sellOrnament"] = true;
     filter["history"][0]["change"] = true;
     filter["world"]["spotOz"] = true;
@@ -178,26 +212,70 @@ ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out,
         }
     }
 
-    // Direction of the announcement round that produced the displayed price.
+    // Latest announcement round. Verified 2026-11-06: `current` can lag several
+    // rounds behind `history` (price 65150 from 10:10 while 65000 was announced
+    // at 10:36), so the newest round wins, but only when `current` appears in
+    // history. Otherwise history may belong to an earlier day, so `current` is
+    // kept and no announcement time is claimed.
     // NOTE: current.change is the change vs. the previous DAY; the per-round
-    // change is in history[].change. Verified 2026-11-06: history can already
-    // contain a newer round than `current`, so we search backwards (last few
-    // entries) for the round whose price equals the displayed price.
+    // change is in history[].change.
     JsonArrayConst history = doc["history"].as<JsonArrayConst>();
     if (!history.isNull() && history.size() > 0) {
         const bool ornament = primary == ThaiPrice::Ornament;
+        const char* const sellKey = ornament ? "sellOrnament" : "sellBar";
         const int32_t mine = ornament ? p.sellOrnament : p.sellBar;
         const size_t n = history.size();
-        const size_t lookback = n < kTrendLookback ? n : kTrendLookback;
-        for (size_t k = 0; k < lookback; ++k) {
-            JsonVariantConst e = history[n - 1 - k];
-            int32_t hSell = 0, hChange = 0;
-            bool present = false;
-            if (readPrice(e[ornament ? "sellOrnament" : "sellBar"], hSell, present) &&
-                hSell == mine && readRounded(e["change"], hChange)) {
-                p.trend = signOf(hChange);
+
+        // updatedAt is sometimes a round's time and sometimes the request time.
+        // Only the former can date the rounds, because history has no dates.
+        const int64_t thaiSec = p.updatedAtEpoch + kThaiUtcOffsetSec;
+        const int64_t thaiDay = thaiSec >= 0 ? thaiSec / 86400 : (thaiSec - 86399) / 86400;
+        const int64_t secOfDay = thaiSec - thaiDay * 86400;
+        bool currentInHistory = false;
+        bool updatedAtIsRound = false;
+        for (JsonVariantConst e : history) {
+            int32_t sell = 0;
+            if (readRounded(e[sellKey], sell) && sell == mine) currentInHistory = true;
+            const int minute = clockMinutes(e["time"].as<const char*>());
+            if (minute >= 0 && secOfDay % 60 == 0 && minute * 60 == secOfDay) {
+                updatedAtIsRound = true;
+            }
+        }
+
+        Round last;
+        if (currentInHistory && readRound(history[n - 1], last)) {
+            if ((ornament ? last.sellOrnament : last.sellBar) != mine) {
+                p.buyBar = last.buyBar;
+                p.sellBar = last.sellBar;
+                p.buyOrnament = last.buyOrnament;
+                p.sellOrnament = last.sellOrnament;
+                p.hasOrnament = true;
+            }
+            p.announcedMinute = (int16_t)last.minute;
+            if (updatedAtIsRound) {
+                unsigned month = 0, day = 0;
+                monthDayFromDays(thaiDay, month, day);
+                p.announcedDay = (uint8_t)day;
+                p.announcedMonth = (uint8_t)month;
+            }
+            int32_t change = 0;
+            if (readRounded(history[n - 1]["change"], change)) {
+                p.trend = signOf(change);
                 p.hasTrend = true;
-                break;
+            }
+        } else {
+            // Direction of the round that produced the displayed price.
+            const size_t lookback = n < kTrendLookback ? n : kTrendLookback;
+            for (size_t k = 0; k < lookback; ++k) {
+                JsonVariantConst e = history[n - 1 - k];
+                int32_t hSell = 0, hChange = 0;
+                bool present = false;
+                if (readPrice(e[sellKey], hSell, present) && hSell == mine &&
+                    readRounded(e["change"], hChange)) {
+                    p.trend = signOf(hChange);
+                    p.hasTrend = true;
+                    break;
+                }
             }
         }
     }

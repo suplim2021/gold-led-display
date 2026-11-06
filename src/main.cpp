@@ -6,6 +6,8 @@
 
 #include <Arduino.h>
 #include <ArduinoOTA.h>
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <time.h>
 
 #include "AppConfig.h"
@@ -16,6 +18,7 @@
 #include "PriceStore.h"
 #include "PriceTracker.h"
 #include "ScreenSelector.h"
+#include "Timing.h"
 #include "WifiLink.h"
 
 using namespace gold;
@@ -49,7 +52,8 @@ static DisplayMode mode = (DisplayMode)DISPLAY_MODE_DEFAULT;
 static ScreenTiming timing;
 static uint32_t nextFetchMs = 0;
 static uint32_t lastLogMs = 0;
-static uint32_t modeBannerUntilMs = 0;
+static uint32_t lastDisplayRefreshMs = 0;
+static OneShotTimer modeBanner;
 static int currentIntensity = -1;
 static bool otaStarted = false;
 static bool otaInProgress = false;
@@ -82,10 +86,10 @@ static void logPrice(const char* tag, const GoldPrice& p) {
     gmtime_r(&ts, &tmv);
     Serial.printf(
         "[%s] bar buy=%ld sell=%ld | ornament buy=%ld sell=%ld | round trend=%d | day change=%ld "
-        "| world=$%ld | updated %04d-%02d-%02d %02d:%02d\n",
+        "| world=$%ld | updated %04d-%02d-%02d %02d:%02d | announced %d/%d min=%d\n",
         tag, (long)p.buyBar, (long)p.sellBar, (long)p.buyOrnament, (long)p.sellOrnament, p.trend,
         (long)p.change, (long)p.worldSpot, tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
-        tmv.tm_hour, tmv.tm_min);
+        tmv.tm_hour, tmv.tm_min, p.announcedDay, p.announcedMonth, p.announcedMinute);
 }
 
 static void doFetch() {
@@ -134,7 +138,7 @@ static void handleButton(uint32_t nowMs) {
         } else if (!longDone) {
             mode = (DisplayMode)(((uint8_t)mode + 1) % kDisplayModeCount);
             store.saveMode(mode);
-            modeBannerUntilMs = nowMs + kModeBannerMs;
+            modeBanner.start(nowMs, kModeBannerMs);
             Serial.printf("[ui] display mode -> %u\n", (unsigned)mode);
         }
     }
@@ -159,6 +163,9 @@ static void setupOta() {
         showText("0");
     });
     ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
+        // handle() blocks for the whole upload. Feeding only on progress means
+        // a stalled upload still resets the board; the old firmware stays active.
+        feedLoopWDT();
         const int pct = total ? (int)((uint64_t)done * 100 / total) : 0;
         if (pct == otaLastPercent) return;
         otaLastPercent = pct;
@@ -210,7 +217,8 @@ static void serviceOta(uint32_t nowMs) {
 void setup() {
     Serial.begin(115200);
     delay(50);
-    Serial.println("\n[boot] Thai gold price LED display");
+    Serial.printf("\n[boot] Thai gold price LED display, reset reason=%d\n",
+                  (int)esp_reset_reason());  // esp_reset_reason_t: 6 = task watchdog
 
     // Display first, so the user sees something immediately.
     brightness.dayIntensity = DISPLAY_INTENSITY;
@@ -229,6 +237,8 @@ void setup() {
     timing.alternatePeriodMs = ALTERNATE_PERIOD_MS;
     timing.thaiShowMs = THAI_SHOW_MS;
     timing.worldShowMs = WORLD_SHOW_MS;
+    timing.dateShowMs = DATE_SHOW_MS;
+    timing.timeShowMs = TIME_SHOW_MS;
     DisplayMode savedMode;
     if (store.loadMode(savedMode)) mode = savedMode;
     GoldPrice saved;
@@ -241,9 +251,15 @@ void setup() {
     configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
 
     // Wi-Fi: saved network, or the phone setup portal ("AP" on the display).
-    // ("----" stays while a saved network is being joined, up to ~20 s)
     wifi.begin(DEVICE_HOSTNAME, SETUP_AP_NAME, SETUP_AP_PASSWORD, WIFI_RETRY_BASE_MS,
-               WIFI_RETRY_MAX_MS, SETUP_PORTAL_TIMEOUT_SEC);
+               WIFI_RETRY_MAX_MS);
+
+    // Reset the board if loop() ever stops returning. The Arduino core feeds
+    // this after every loop() pass. The timeout must exceed the longest normal
+    // blocking step, which is one HTTPS fetch.
+    esp_task_wdt_init(LOOP_WATCHDOG_SEC, true);
+    enableLoopWDT();
+    lastDisplayRefreshMs = millis();
 }
 
 void loop() {
@@ -267,6 +283,7 @@ void loop() {
 
     const uint32_t t = millis();
     const int64_t epoch = epochNow();
+    tracker.tick(t);
 
     const uint8_t want = intensityFor(epoch, brightness);
     if (want != currentIntensity) {
@@ -276,7 +293,7 @@ void loop() {
     }
 
     Frame frame;
-    if ((int32_t)(modeBannerUntilMs - t) > 0) {
+    if (modeBanner.active(t)) {
         char banner[4] = {'-', (char)('0' + (uint8_t)mode), '-', '\0'};
         renderCenteredText(frame, banner);
     } else {
@@ -292,7 +309,14 @@ void loop() {
         in.setupPortal = wifi.portalActive() && !wifi.connected();
         renderScreen(frame, selectScreen(in, timing));
     }
-    display.show(frame);
+    if (t - lastDisplayRefreshMs >= DISPLAY_REFRESH_MS) {
+        // Recover from noise or a panel power dip without a reboot.
+        lastDisplayRefreshMs = t;
+        display.refreshHardware((uint8_t)currentIntensity);
+        display.show(frame, true);
+    } else {
+        display.show(frame);
+    }
 
     if (t - lastLogMs > 30000) {
         lastLogMs = t;

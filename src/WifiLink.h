@@ -4,6 +4,8 @@
 // First boot (no saved network) -> access point "GoldLED-Setup" opens and the
 // display shows "AP". Connect with a phone, pick your Wi-Fi, enter password.
 // Holding the BOOT button 5 s forgets the network and opens the portal again.
+// With a saved network the portal never opens by itself: after a power cut the
+// router often boots later than the ESP32, and that must not expose the AP.
 #pragma once
 
 #include <Arduino.h>
@@ -12,7 +14,7 @@
 class WifiLink {
 public:
     void begin(const char* hostname, const char* apName, const char* apPassword,
-               uint32_t retryBaseMs, uint32_t retryMaxMs, uint32_t portalTimeoutSec);
+               uint32_t retryBaseMs, uint32_t retryMaxMs);
     void loop(uint32_t nowMs);  // never blocks
     bool connected() const { return connected_; }
     bool portalActive() { return wm_.getConfigPortalActive(); }
@@ -21,13 +23,13 @@ public:
 
 private:
     void openPortal();
+    void blockFirmwareUpload();
 
     WiFiManager wm_;
     const char* apName_ = "";
     const char* apPassword_ = "";
     uint32_t retryBaseMs_ = 10000;
     uint32_t retryMaxMs_ = 120000;
-    uint32_t portalTimeoutSec_ = 180;
     uint32_t nextAttemptMs_ = 0;
     uint8_t attempt_ = 0;
     bool connected_ = false;

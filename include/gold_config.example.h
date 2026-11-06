@@ -11,7 +11,6 @@
 #define DEVICE_HOSTNAME "gold-led"          // also the OTA name: gold-led.local
 #define SETUP_AP_NAME "GoldLED-Setup"       // Wi-Fi name shown on your phone
 #define SETUP_AP_PASSWORD "goldprice"       // 8+ chars, or "" for an open AP
-#define SETUP_PORTAL_TIMEOUT_SEC 180        // with a saved network, close portal after this
 
 // ----- Over-the-air update (Wi-Fi) -----
 // The password is NOT set here: put it in ota_password.txt (project root,
@@ -47,12 +46,15 @@
 // ----- What to show -----
 // 0 = Thai sell price only
 // 1 = Thai sell / buy alternating (ALTERNATE_PERIOD_MS each)
-// 2 = Thai sell (THAI_SHOW_MS) / world spot "$4132" (WORLD_SHOW_MS)   <- default
+// 2 = Thai sell (THAI_SHOW_MS) / world spot "$4132" (WORLD_SHOW_MS) /
+//     announcement date "6/11" (DATE_SHOW_MS) / time "10:46" (TIME_SHOW_MS)   <- default
 // Short press of the BOOT button cycles 0 -> 1 -> 2; the choice is saved.
 #define DISPLAY_MODE_DEFAULT 2
 #define ALTERNATE_PERIOD_MS 5000
-#define THAI_SHOW_MS 8000
+#define THAI_SHOW_MS 10000
 #define WORLD_SHOW_MS 4000
+#define DATE_SHOW_MS 2000
+#define TIME_SHOW_MS 2000
 // Main Thai price: 1 = ทองรูปพรรณ 96.5% ขายออก (sellOrnament)  <- default
 //                  0 = ทองคำแท่ง 96.5% ขายออก (sellBar)
 // The chosen price is required: if the API stops sending it the display shows
@@ -75,6 +77,8 @@
 #define RETRY_MAX_MS 300000UL            // retries back off up to 5 min
 #define WIFI_RETRY_BASE_MS 10000UL
 #define WIFI_RETRY_MAX_MS 120000UL
+#define LOOP_WATCHDOG_SEC 90             // reset if loop() hangs this long; keep above 3 x HTTP_TIMEOUT_MS
+#define DISPLAY_REFRESH_MS 60000UL       // rewrite MAX7219 registers and pixels this often
 
 // Data older than this (since last successful fetch) is marked stale.
 #define STALE_AFTER_MS 180000UL

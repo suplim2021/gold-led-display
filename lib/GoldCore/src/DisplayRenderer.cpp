@@ -1,5 +1,6 @@
 #include "DisplayRenderer.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace gold {
@@ -107,6 +108,22 @@ RenderResult renderPrice(Frame& frame, int32_t price, PriceMarker marker, bool s
     char digits[12];
     if (formatPrice(price, digits, sizeof(digits)) == 0) return r;
     return decorate(frame, renderCenteredText(frame, digits), marker, staleUnderline, trend);
+}
+
+RenderResult renderDate(Frame& frame, int day, int month, bool staleUnderline) {
+    frame.clear();
+    if (day < 1 || day > 31 || month < 1 || month > 12) return RenderResult{false, 0, 0};
+    char text[8];
+    snprintf(text, sizeof(text), "%d/%d", day, month);
+    return decorate(frame, renderCenteredText(frame, text), PriceMarker::None, staleUnderline, 0);
+}
+
+RenderResult renderTimeOfDay(Frame& frame, int minuteOfDay, bool staleUnderline) {
+    frame.clear();
+    if (minuteOfDay < 0 || minuteOfDay >= 24 * 60) return RenderResult{false, 0, 0};
+    char text[8];
+    snprintf(text, sizeof(text), "%02d:%02d", minuteOfDay / 60, minuteOfDay % 60);
+    return decorate(frame, renderCenteredText(frame, text), PriceMarker::None, staleUnderline, 0);
 }
 
 // Dollar sign, 3 px wide and 7 px tall (rows 0..6): the stems poke out

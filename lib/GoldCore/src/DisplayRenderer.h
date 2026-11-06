@@ -59,6 +59,12 @@ RenderResult renderPrice(Frame& frame, int32_t price,
 RenderResult renderWorldPrice(Frame& frame, int32_t usd, bool staleUnderline = false,
                               int8_t trend = 0);
 
+// Clears the frame and draws an announcement date as "6/11" (day/month).
+RenderResult renderDate(Frame& frame, int day, int month, bool staleUnderline = false);
+
+// Clears the frame and draws an announcement time as "09:05" (24-hour).
+RenderResult renderTimeOfDay(Frame& frame, int minuteOfDay, bool staleUnderline = false);
+
 // Draws only the trend triangle (exposed for tests / preview).
 void drawTrend(Frame& frame, int8_t trend);
 

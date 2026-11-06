@@ -3,7 +3,7 @@
 #include <Preferences.h>
 
 static const char* kNs = "goldled";
-static constexpr uint8_t kVersion = 2;  // bump when the layout changes
+static constexpr uint8_t kVersion = 3;  // bump when the layout changes
 
 bool PriceStore::load(gold::GoldPrice& out) {
     Preferences prefs;
@@ -20,6 +20,9 @@ bool PriceStore::load(gold::GoldPrice& out) {
         p.hasOrnament = prefs.getBool("hasOrn", false);
         p.buyOrnament = prefs.getInt("buyOrn", 0);
         p.sellOrnament = prefs.getInt("sellOrn", 0);
+        p.announcedMinute = prefs.getShort("annMin", -1);
+        p.announcedDay = prefs.getUChar("annDay", 0);
+        p.announcedMonth = prefs.getUChar("annMon", 0);
         ok = p.sellBar > 0 && p.buyBar > 0 && p.updatedAtEpoch > 0;
         if (ok) out = p;
     }
@@ -39,6 +42,9 @@ bool PriceStore::save(const gold::GoldPrice& p) {
     prefs.putBool("hasOrn", p.hasOrnament);
     prefs.putInt("buyOrn", p.buyOrnament);
     prefs.putInt("sellOrn", p.sellOrnament);
+    prefs.putShort("annMin", p.announcedMinute);
+    prefs.putUChar("annDay", p.announcedDay);
+    prefs.putUChar("annMon", p.announcedMonth);
     prefs.putUChar("ver", kVersion);
     prefs.end();
     return true;

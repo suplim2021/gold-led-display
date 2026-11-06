@@ -3,8 +3,9 @@
 //  Mode 0 (SellOnly)  : Thai sell price only.
 //  Mode 1 (SellBuy)   : Thai sell (marker top-left) / buy (marker bottom-left),
 //                       switching every alternatePeriodMs.
-//  Mode 2 (ThaiWorld) : Thai sell for thaiShowMs, then world spot "$4132"
-//                       for worldShowMs (Thai price gets most of the time).
+//  Mode 2 (ThaiWorld) : Thai sell for thaiShowMs, world spot "$4132" for
+//                       worldShowMs, then the announcement date "6/11" and time
+//                       "10:46" (pages with unknown data are skipped).
 //  Trend arrow        : triangle top-right = last round went UP,
 //                       bottom-right = DOWN (Thai: latest announcement round;
 //                       world: vs. previous close).
@@ -25,11 +26,11 @@ namespace gold {
 enum class DisplayMode : uint8_t { SellOnly = 0, SellBuy = 1, ThaiWorld = 2 };
 constexpr uint8_t kDisplayModeCount = 3;
 
-enum class ScreenKind : uint8_t { Booting, Price, World, Status, Setup };
+enum class ScreenKind : uint8_t { Booting, Price, World, Status, Setup, Date, Time };
 
 struct Screen {
     ScreenKind kind = ScreenKind::Booting;
-    int32_t value = 0;
+    int32_t value = 0;  // price; Date: day * 100 + month; Time: minutes since midnight
     PriceMarker marker = PriceMarker::None;
     bool stale = false;
     int8_t trend = 0;
@@ -43,8 +44,10 @@ struct Screen {
 
 struct ScreenTiming {
     uint32_t alternatePeriodMs = 5000;  // mode 1
-    uint32_t thaiShowMs = 8000;         // mode 2
+    uint32_t thaiShowMs = 10000;        // mode 2
     uint32_t worldShowMs = 4000;        // mode 2
+    uint32_t dateShowMs = 2000;         // mode 2
+    uint32_t timeShowMs = 2000;         // mode 2
     uint32_t statusEveryMs = 10000;
     uint32_t statusShowMs = 2000;
 };
