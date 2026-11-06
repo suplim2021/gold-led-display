@@ -12,11 +12,15 @@
 //     "history": [ {..., "sellBar": 65400, "change": -50}, ... ]  <- per round
 //     "world": { "spotOz": 4131.67, "change": 84.2, "updatedAt": "..." }
 //   }
-// Only `current.buyBar`, `current.sellBar` and `current.updatedAt` are
-// mandatory. Everything else is optional and never rejects the bar price:
+// `current.buyBar`, `current.sellBar` and `current.updatedAt` are always
+// mandatory; with ThaiPrice::Ornament also buyOrnament/sellOrnament.
+// NOTE (verified 2026-11-06): current.updatedAt now changes on every request
+// (it is the server time, not the announcement time), so it must not be used
+// to decide whether the price changed.
+// Everything else is optional and never rejects the primary price:
 //   * current.change       = change vs. previous DAY (verified on live data)
 //   * history[last].change = change of the latest round -> trend arrow
-//   * ornament prices (may contain decimals -> rounded)
+//   * the non-primary Thai price (buyOrnament may contain decimals -> rounded)
 //   * world.spotOz (USD/oz, rounded), sign of world.change
 // Numbers given as strings with thousands separators ("65,450") are accepted.
 #pragma once
@@ -46,7 +50,12 @@ constexpr int32_t kMaxPlausiblePrice = 999999;  // also the 6-digit display limi
 constexpr int32_t kMinPlausibleWorld = 200;     // USD/oz sanity bounds
 constexpr int32_t kMaxPlausibleWorld = 99999;   // "$" + 5 digits still fits
 
-ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out);
+// Which Thai price is displayed as the main number. The primary price is
+// mandatory and strictly validated; the other one is parsed when available.
+enum class ThaiPrice : uint8_t { Bar = 0, Ornament = 1 };
+
+ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out,
+                              ThaiPrice primary = ThaiPrice::Bar);
 
 // Parses "65450", "65,450", "65450.00", " 65 450 " into an integer.
 // Rejects empty strings, signs, fractions other than .0/.00 and other junk.

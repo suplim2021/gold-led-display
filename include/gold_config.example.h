@@ -13,9 +13,13 @@
 #define SETUP_AP_PASSWORD "goldprice"       // 8+ chars, or "" for an open AP
 #define SETUP_PORTAL_TIMEOUT_SEC 180        // with a saved network, close portal after this
 
-// ----- Over-the-air update -----
+// ----- Over-the-air update (Wi-Fi) -----
+// The password is NOT set here: put it in ota_password.txt (project root,
+// git-ignored) or the GOLD_OTA_PASSWORD environment variable. Without a valid
+// password (>= 10 chars) the firmware is built with OTA switched off.
 #define OTA_ENABLED 1
-#define OTA_PASSWORD "goldled-ota"          // must match --auth in platformio.ini
+#define OTA_MAX_AUTH_FAILURES 5             // wrong passwords in a row ...
+#define OTA_LOCKOUT_MIN 15                  // ... lock OTA for this long
 
 // ----- Display wiring -----
 // Driven with slow software SPI (more reliable with 3.3 V logic), so any
@@ -49,8 +53,11 @@
 #define ALTERNATE_PERIOD_MS 5000
 #define THAI_SHOW_MS 8000
 #define WORLD_SHOW_MS 4000
-// 0 = ทองคำแท่ง (gold bar), 1 = ทองรูปพรรณ (ornament). Both 96.5%.
-#define THAI_PRICE_ORNAMENT 0
+// Main Thai price: 1 = ทองรูปพรรณ 96.5% ขายออก (sellOrnament)  <- default
+//                  0 = ทองคำแท่ง 96.5% ขายออก (sellBar)
+// The chosen price is required: if the API stops sending it the display shows
+// E3 instead of silently falling back to the other price.
+#define THAI_PRICE_ORNAMENT 1
 // Trend triangle: top-right = last round went up, bottom-right = down.
 #define SHOW_TREND_ARROW 1
 #define ENABLE_BOOT_BUTTON 1

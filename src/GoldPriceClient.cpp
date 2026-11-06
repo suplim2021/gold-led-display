@@ -60,7 +60,7 @@ gold::FetchResult ThaiGoldTodayClient::fetch(gold::GoldPrice& out) {
     }
 
     gold::GoldPrice parsed;
-    const gold::ParseError pe = gold::parseThaiGoldToday(body.c_str(), body.length(), parsed);
+    const gold::ParseError pe = gold::parseThaiGoldToday(body.c_str(), body.length(), parsed, primary_);
     if (pe != gold::ParseError::Ok) {
         r.fault = pe == gold::ParseError::EmptyBody ? gold::Fault::Api : gold::Fault::Data;
         r.detail = gold::parseErrorName(pe);

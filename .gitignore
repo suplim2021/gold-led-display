@@ -3,3 +3,4 @@
 include/gold_config.h
 tools/preview/out/
 *.o
+ota_password.txt

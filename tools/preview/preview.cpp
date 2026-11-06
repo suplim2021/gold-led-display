@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
         ss << in.rdbuf();
         const std::string body = ss.str();
         GoldPrice p;
-        const ParseError e = parseThaiGoldToday(body.data(), body.size(), p);
+        const ParseError e = parseThaiGoldToday(body.data(), body.size(), p, ThaiPrice::Ornament);
         if (e != ParseError::Ok) {
             fprintf(stderr, "parse error: %s\n", parseErrorName(e));
             return 1;
@@ -121,6 +121,8 @@ int main(int argc, char** argv) {
                "day change=%d | world=$%d (trend %d) | updatedAt(epoch)=%lld\n\n",
                p.buyBar, p.sellBar, p.buyOrnament, p.sellOrnament, p.trend, p.change,
                p.worldSpot, p.worldTrend, (long long)p.updatedAtEpoch);
+        items.push_back(priceItem("MAIN: ornament sell " + std::to_string(p.sellOrnament),
+                                  p.sellOrnament, PriceMarker::None, false, p.trend));
         items.push_back(priceItem("Thai bar sell " + std::to_string(p.sellBar), p.sellBar,
                                   PriceMarker::None, false, p.trend));
         items.push_back(priceItem("Thai bar buy", p.buyBar, PriceMarker::Buy, false, p.trend));

@@ -90,9 +90,12 @@ static bool readRounded(JsonVariantConst v, int32_t& out) {
     return false;
 }
 
+static constexpr size_t kTrendLookback = 3;
+
 static int8_t signOf(int32_t v) { return v > 0 ? 1 : (v < 0 ? -1 : 0); }
 
-ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out) {
+ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out,
+                              ThaiPrice primary) {
     if (!body || length == 0) return ParseError::EmptyBody;
     bool onlySpace = true;
     for (size_t i = 0; i < length; ++i) {
@@ -114,6 +117,7 @@ ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out) {
     filter["current"]["updatedAt"] = true;
     filter["current"]["change"] = true;
     filter["history"][0]["sellBar"] = true;  // [0] = applies to every element
+    filter["history"][0]["sellOrnament"] = true;
     filter["history"][0]["change"] = true;
     filter["world"]["spotOz"] = true;
     filter["world"]["change"] = true;
@@ -149,26 +153,52 @@ ParseError parseThaiGoldToday(const char* body, size_t length, GoldPrice& out) {
         p.hasChange = true;
     }
 
-    int32_t bo = 0, so = 0;
-    if (readRounded(current["buyOrnament"], bo) && readRounded(current["sellOrnament"], so) &&
-        plausible(bo) && plausible(so) && bo <= so) {
+    // Ornament (ทองรูปพรรณ). Verified 2026-11-06: sellOrnament is an integer
+    // (= sellBar + 800), buyOrnament is an integer in `current` but may carry
+    // decimals in history (e.g. 62959.48), so the buy side is rounded.
+    if (primary == ThaiPrice::Ornament) {
+        // Primary price: required and strictly validated -> E3 if missing/odd,
+        // never silently replaced by the bar price.
+        bool soPresent = false;
+        int32_t so = 0, bo = 0;
+        const bool soOk = readPrice(current["sellOrnament"], so, soPresent);
+        if (!soPresent || current["buyOrnament"].isNull()) return ParseError::MissingPrice;
+        if (!soOk || !readRounded(current["buyOrnament"], bo)) return ParseError::InvalidPrice;
+        if (!plausible(so) || !plausible(bo) || bo > so) return ParseError::InvalidPrice;
         p.buyOrnament = bo;
         p.sellOrnament = so;
         p.hasOrnament = true;
+    } else {
+        int32_t bo = 0, so = 0;
+        if (readRounded(current["buyOrnament"], bo) && readRounded(current["sellOrnament"], so) &&
+            plausible(bo) && plausible(so) && bo <= so) {
+            p.buyOrnament = bo;
+            p.sellOrnament = so;
+            p.hasOrnament = true;
+        }
     }
 
-    // Direction of the latest announcement round. NOTE: current.change is the
-    // change vs. the previous DAY; the per-round change is in history[].change.
-    // Only trusted when the last history entry is the same price as `current`.
+    // Direction of the announcement round that produced the displayed price.
+    // NOTE: current.change is the change vs. the previous DAY; the per-round
+    // change is in history[].change. Verified 2026-11-06: history can already
+    // contain a newer round than `current`, so we search backwards (last few
+    // entries) for the round whose price equals the displayed price.
     JsonArrayConst history = doc["history"].as<JsonArrayConst>();
     if (!history.isNull() && history.size() > 0) {
-        JsonVariantConst last = history[history.size() - 1];
-        int32_t hSell = 0, hChange = 0;
-        bool present = false;
-        if (readPrice(last["sellBar"], hSell, present) && hSell == p.sellBar &&
-            readRounded(last["change"], hChange)) {
-            p.trend = signOf(hChange);
-            p.hasTrend = true;
+        const bool ornament = primary == ThaiPrice::Ornament;
+        const int32_t mine = ornament ? p.sellOrnament : p.sellBar;
+        const size_t n = history.size();
+        const size_t lookback = n < kTrendLookback ? n : kTrendLookback;
+        for (size_t k = 0; k < lookback; ++k) {
+            JsonVariantConst e = history[n - 1 - k];
+            int32_t hSell = 0, hChange = 0;
+            bool present = false;
+            if (readPrice(e[ornament ? "sellOrnament" : "sellBar"], hSell, present) &&
+                hSell == mine && readRounded(e["change"], hChange)) {
+                p.trend = signOf(hChange);
+                p.hasTrend = true;
+                break;
+            }
         }
     }
 

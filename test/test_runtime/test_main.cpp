@@ -378,6 +378,44 @@ void test_night_dimming() {
     TEST_ASSERT_FALSE(isNightHour(3, 4, 4));
 }
 
+void test_new_server_timestamp_alone_does_not_write_flash() {
+    // API now returns the server time in updatedAt: it changes every poll.
+    PriceTracker t;
+    t.setWifiConnected(true);
+    t.onFetchSuccess(samplePrice(), 0);
+    t.markPersisted();
+    for (int i = 1; i <= 10; ++i) {
+        GoldPrice p = samplePrice();
+        p.updatedAtEpoch += i * 60;
+        t.onFetchSuccess(p, i * 60000u);
+        TEST_ASSERT_FALSE(t.needsPersist());
+    }
+    GoldPrice changed = samplePrice();
+    changed.sellOrnament += 50;
+    t.onFetchSuccess(changed, 700000u);
+    TEST_ASSERT_TRUE(t.needsPersist());
+}
+
+void test_ornament_is_main_price_on_screen() {
+    PriceTracker t;
+    t.setWifiConnected(true);
+    t.onFetchSuccess(samplePrice(), 0);
+    ScreenInput in;
+    in.hasPrice = true;
+    in.price = t.price();
+    in.fresh = true;
+    in.useOrnament = true;
+    in.mode = DisplayMode::ThaiWorld;
+    in.nowMs = 1000;
+    TEST_ASSERT_EQUAL_INT32(66250, selectScreen(in).value);
+    in.mode = DisplayMode::SellBuy;
+    in.nowMs = 6000;
+    TEST_ASSERT_EQUAL_INT32(63945, selectScreen(in).value);  // ornament buy
+    Frame f;
+    in.mode = DisplayMode::SellOnly;
+    TEST_ASSERT_TRUE(renderScreen(f, selectScreen(in)));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_boot_shows_dashes_without_data);
@@ -405,5 +443,7 @@ int main(int, char**) {
     RUN_TEST(test_world_change_alone_does_not_write_flash);
     RUN_TEST(test_setup_portal_screen);
     RUN_TEST(test_night_dimming);
+    RUN_TEST(test_new_server_timestamp_alone_does_not_write_flash);
+    RUN_TEST(test_ornament_is_main_price_on_screen);
     return UNITY_END();
 }

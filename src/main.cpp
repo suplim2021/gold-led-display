@@ -12,6 +12,7 @@
 #include "Brightness.h"
 #include "GoldPriceClient.h"
 #include "LedMatrix.h"
+#include "OtaGuard.h"
 #include "PriceStore.h"
 #include "PriceTracker.h"
 #include "ScreenSelector.h"
@@ -28,8 +29,10 @@ static LedMatrix display(DISPLAY_HARDWARE_TYPE, DISPLAY_DIN_PIN, DISPLAY_CLK_PIN
                          DISPLAY_MODULES,
                          DISPLAY_MIRROR_X != 0, DISPLAY_FLIP_Y != 0);
 static WifiLink wifi;
+static constexpr ThaiPrice kPrimaryPrice =
+    THAI_PRICE_ORNAMENT ? ThaiPrice::Ornament : ThaiPrice::Bar;
 static ThaiGoldTodayClient apiClient(GOLD_API_URL, GOLD_API_ALLOW_INSECURE_TLS != 0,
-                                     HTTP_TIMEOUT_MS);
+                                     HTTP_TIMEOUT_MS, kPrimaryPrice);
 static GoldPriceProvider& provider = apiClient;  // swap here to change data source
 static PriceStore store;
 
@@ -50,6 +53,23 @@ static uint32_t modeBannerUntilMs = 0;
 static int currentIntensity = -1;
 static bool otaStarted = false;
 static bool otaInProgress = false;
+
+// OTA is only compiled in when the build script found a valid password
+// (tools/ota_secret.py defines OTA_PASSWORD_MD5). No password = no OTA.
+#if OTA_ENABLED && defined(OTA_PASSWORD_MD5)
+#define OTA_ACTIVE 1
+#else
+#define OTA_ACTIVE 0
+#endif
+static OtaGuardPolicy makeOtaPolicy() {
+    OtaGuardPolicy p;
+    p.maxFailures = OTA_MAX_AUTH_FAILURES;
+    p.lockoutMs = (uint32_t)OTA_LOCKOUT_MIN * 60UL * 1000UL;
+    return p;
+}
+static OtaGuard otaGuard(makeOtaPolicy());
+static volatile bool otaStopRequested = false;
+static int otaLastPercent = -1;
 
 static int64_t epochNow() {
     const time_t t = time(nullptr);
@@ -128,21 +148,62 @@ static void handleButton(uint32_t nowMs) {
 }
 
 static void setupOta() {
-#if OTA_ENABLED
+#if OTA_ACTIVE
     ArduinoOTA.setHostname(DEVICE_HOSTNAME);
-    ArduinoOTA.setPassword(OTA_PASSWORD);
+    ArduinoOTA.setPasswordHash(OTA_PASSWORD_MD5);  // only the hash is in the firmware
+    ArduinoOTA.setRebootOnSuccess(true);
     ArduinoOTA.onStart([]() {
         otaInProgress = true;
-        Serial.println("[ota] update started");
-        showText("----");
+        otaLastPercent = -1;
+        Serial.println("[ota] authenticated, update started");
+        showText("0");
     });
-    ArduinoOTA.onEnd([]() { Serial.println("[ota] done, rebooting"); });
+    ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
+        const int pct = total ? (int)((uint64_t)done * 100 / total) : 0;
+        if (pct == otaLastPercent) return;
+        otaLastPercent = pct;
+        char buf[12];
+        formatPrice(pct, buf, sizeof(buf));
+        showText(buf);  // progress 0..100 on the display
+    });
+    ArduinoOTA.onEnd([]() {
+        otaGuard.onSuccess();
+        Serial.println("[ota] done, rebooting");
+    });
     ArduinoOTA.onError([](ota_error_t e) {
         otaInProgress = false;
-        Serial.printf("[ota] error %u\n", (unsigned)e);
+        if (e == OTA_AUTH_ERROR) {
+            Serial.printf("[ota] WRONG PASSWORD (%u/%u)\n", otaGuard.failures() + 1,
+                          (unsigned)OTA_MAX_AUTH_FAILURES);
+            if (otaGuard.onAuthFailure(millis())) otaStopRequested = true;
+        } else {
+            // Update library rejects bad images; the old firmware keeps running.
+            Serial.printf("[ota] error %u - update discarded, old firmware kept\n", (unsigned)e);
+        }
     });
     ArduinoOTA.begin();
-    Serial.printf("[ota] ready: %s.local\n", DEVICE_HOSTNAME);
+    Serial.printf("[ota] ready: %s.local (password protected)\n", DEVICE_HOSTNAME);
+#else
+    Serial.println("[ota] DISABLED: no valid OTA password at build time (see README, OTA)");
+#endif
+}
+
+static void serviceOta(uint32_t nowMs) {
+#if OTA_ACTIVE
+    if (!otaStarted) return;
+    if (otaStopRequested) {
+        otaStopRequested = false;
+        ArduinoOTA.end();
+        Serial.printf("[ota] too many wrong passwords - OTA locked for %u min\n",
+                      (unsigned)OTA_LOCKOUT_MIN);
+    }
+    if (otaGuard.shouldUnlock(nowMs)) {
+        ArduinoOTA.begin();
+        Serial.println("[ota] lockout over, OTA accepting updates again");
+    }
+    if (!otaGuard.locked()) ArduinoOTA.handle();
+#else
+    (void)nowMs;
 #endif
 }
 
@@ -197,9 +258,7 @@ void loop() {
             otaStarted = true;
         }
     }
-#if OTA_ENABLED
-    if (otaStarted) ArduinoOTA.handle();
-#endif
+    serviceOta(now);
     if (otaInProgress) return;
 
     if (wifi.connected() && (int32_t)(now - nextFetchMs) >= 0) doFetch();

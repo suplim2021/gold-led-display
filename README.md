@@ -1,6 +1,6 @@
 # เครื่องแสดงราคาทองคำไทย — ESP32 + MAX7219 (32×8)
 
-แสดงราคา **ทองคำแท่ง 96.5% (บาทต่อทองหนัก 1 บาท)** บนจอ LED Dot Matrix สีแดง 4-in-1
+แสดงราคา **ขายออกทองรูปพรรณ 96.5% (บาทต่อทองหนัก 1 บาท)** บนจอ LED Dot Matrix สีแดง 4-in-1
 ดึงข้อมูลเองผ่าน Wi-Fi ทุก ~60 วินาที ไม่ต้องเปิดคอมพิวเตอร์ค้างไว้
 
 ข้อมูล: [thaigoldtoday.com](https://www.thaigoldtoday.com) (อ้างอิงสมาคมค้าทองคำ — เว็บขอให้ระบุที่มาเมื่อนำไปใช้)
@@ -12,7 +12,7 @@
 | ส่วน | สถานะ |
 |---|---|
 | Firmware คอมไพล์สำหรับ ESP32 (`pio run -e esp32dev`) | ✅ ผ่าน |
-| Unit tests บน PC (`pio test -e native`) — 69 กรณี | ✅ ผ่าน |
+| Unit tests บน PC (`pio test -e native`) — 83 กรณี | ✅ ผ่าน |
 | ตรวจ API จริง (endpoint, JSON schema, HTTPS) | ✅ ตรวจแล้ว 2026-11-05 |
 | ตัวจำลองจอ 32×8 | ✅ |
 | อัปโหลดเข้า ESP32 จริง / Wi-Fi / TLS บนบอร์ด | ⏳ รอฮาร์ดแวร์ |
@@ -68,17 +68,50 @@ gold-led-display/
 
 ### อัปเดตโปรแกรมผ่าน Wi-Fi (OTA)
 
-หลังอัปโหลดผ่าน USB ครั้งแรกแล้ว ครั้งต่อไปไม่ต้องเสียบสาย (คอมต้องอยู่ Wi-Fi วงเดียวกัน):
+อัปเดตผ่าน Wi-Fi ได้ไม่ต้องเสียบสาย แต่ **ต้องมีรหัส OTA** — ไม่มีรหัสค่าเริ่มต้น
+ถ้าไม่ตั้งรหัส firmware จะถูก build แบบ **ปิด OTA** (ปลอดภัยไว้ก่อน)
+
+**ตั้งครั้งเดียว:**
+
+1. สร้างไฟล์ `ota_password.txt` ในโฟลเดอร์โปรเจกต์ (ที่เดียวกับ `platformio.ini`)
+   ใส่รหัสบรรทัดเดียว: **อย่างน้อย 10 ตัว**, ภาษาอังกฤษ/ตัวเลข/สัญลักษณ์ ไม่มีช่องว่างหรือเครื่องหมายคำพูด
+   ```powershell
+   Set-Content -Path ota_password.txt -Value "Your-Own-Pass-2026"
+   ```
+   เปลี่ยน `Your-Own-Pass-2026` เป็นรหัสของคุณเอง (ห้ามใช้ตัวอย่างนี้ตรง ๆ, ใช้ภาษาไทยไม่ได้)
+2. อัปโหลด **ผ่าน USB หนึ่งครั้ง** ให้บอร์ดรู้รหัส:
+   ```bash
+   py -m platformio run -e esp32dev -t upload --upload-port COM10
+   ```
+   ตอน build ต้องเห็น `OTA: enabled (...)` และใน log ของบอร์ดเห็น `[ota] ready: gold-led.local (password protected)`
+
+**ครั้งต่อไป (ไม่ต้องเสียบสาย, คอมอยู่ Wi-Fi เดียวกับเครื่อง):**
 
 ```bash
-pio run -e esp32dev_ota -t upload
+py -m platformio run -e esp32dev_ota -t upload
 ```
 
-ถ้าหา `gold-led.local` ไม่เจอ (บาง Windows) ให้ใช้ IP ที่เห็นใน log หรือหน้า router:
+ถ้าหา `gold-led.local` ไม่เจอ (บาง Windows) ให้ใช้ IP ของเครื่อง (ดูใน log บรรทัด `[wifi] connected, ip=...`):
 
 ```bash
-pio run -e esp32dev_ota -t upload --upload-port 192.168.1.50
+py -m platformio run -e esp32dev_ota -t upload --upload-port 192.168.1.42
 ```
+
+ระหว่างอัปเดตจอจะแสดงเปอร์เซ็นต์ 0–100 แล้วรีสตาร์ทเอง
+
+**การป้องกันอัปเดตโดยไม่ได้รับอนุญาต:**
+
+| มาตรการ | รายละเอียด |
+|---|---|
+| ต้องมีรหัส | ไม่มีรหัส/รหัสอ่อน (สั้นกว่า 10 ตัว, รหัสยอดนิยม, รหัสเก่า `goldled-ota`) → OTA ถูกปิดตั้งแต่ตอน build |
+| ไม่เก็บรหัสจริงใน repo/firmware | รหัสอยู่ใน `ota_password.txt` (อยู่ใน `.gitignore`), บอร์ดเก็บแค่ค่า MD5 |
+| ไม่ส่งรหัสผ่านเครือข่าย | ArduinoOTA ใช้ challenge/response (nonce) |
+| กันเดารหัส | ใส่รหัสผิด 5 ครั้งติด → ปิด OTA 15 นาที (`OTA_MAX_AUTH_FAILURES`, `OTA_LOCKOUT_MIN`) |
+| ไฟล์เสียไม่ทำให้เครื่องพัง | ESP32 มี 2 ช่องโปรแกรม ถ้าอัปเดตไม่ครบ/ไฟล์เสีย จะใช้โปรแกรมเดิมต่อ |
+| รับเฉพาะในวง Wi-Fi บ้าน | OTA ไม่เปิดออกอินเทอร์เน็ต (ไม่ต้อง port-forward ห้ามเปิด port 3232 ที่เราเตอร์) |
+
+ข้อจำกัดที่ควรรู้: โปรโตคอล ArduinoOTA ใช้ MD5 และไม่เข้ารหัสไฟล์ที่ส่ง — เหมาะกับ Wi-Fi บ้านที่มีรหัส
+ไม่เหมาะกับ Wi-Fi สาธารณะ ถ้าลืมรหัส OTA ให้แก้ไฟล์ `ota_password.txt` แล้วอัปโหลดผ่าน USB ใหม่
 
 ### ปรับค่า (ไม่บังคับ)
 
@@ -88,7 +121,7 @@ cp include/gold_config.example.h include/gold_config.h
 
 แก้ค่าใน `include/gold_config.h` แล้วอัปโหลดใหม่ — ไฟล์นี้อยู่ใน `.gitignore`
 (ชื่อไม่ใช้ `config.h` เพราะชนกับ header ใน ESP32 SDK)
-แนะนำเปลี่ยน `SETUP_AP_PASSWORD` และ `OTA_PASSWORD` (ถ้าเปลี่ยน OTA ต้องแก้ `--auth` ใน `platformio.ini` ด้วย)
+แนะนำเปลี่ยน `SETUP_AP_PASSWORD` (รหัส Wi-Fi ตั้งค่า) — ส่วนรหัส OTA อยู่ใน `ota_password.txt`
 
 ## การทดสอบบน PC (ไม่ต้องมีฮาร์ดแวร์)
 
@@ -118,7 +151,9 @@ curl -s https://www.thaigoldtoday.com/api/gold-price -o /tmp/g.json && tools/pre
 | 5 หลัก เช่น 65950 | 4×6, เว้น 1 | 24 | 4 / 4 |
 | 6 หลัก เช่น 100000 | 3×6, เว้น 1 | 23 | 4 / 5 |
 
-ราคาไทยที่แสดง = **ทองคำแท่ง 96.5%** (ตั้งเป็นทองรูปพรรณได้: `THAI_PRICE_ORNAMENT 1`)
+ราคาไทยที่แสดง = **ขายออกทองรูปพรรณ 96.5%** (`sellOrnament`) — ตั้งกลับเป็นทองคำแท่งได้: `THAI_PRICE_ORNAMENT 0`
+ถ้า API ไม่ส่งราคารูปพรรณหรือค่าผิดปกติ จอจะขึ้น `E3` **ไม่สลับไปแสดงราคาแท่งแทนเงียบ ๆ**
+(โหมด 1 ราคารับซื้อ = รับซื้อทองรูปพรรณ ซึ่ง API ส่งมามีทศนิยม จึงปัดเป็นบาท)
 
 ### โหมด (กดปุ่ม BOOT สั้น ๆ เพื่อเปลี่ยน)
 
@@ -171,20 +206,24 @@ Wi-Fi ยังต่ออยู่ และ (ถ้านาฬิกา sync
 
 `GET https://www.thaigoldtoday.com/api/gold-price` — ฟรี ไม่ต้องใช้ key, cache 60 วินาที
 
-ฟิลด์ที่ใช้ (ยืนยันจากเอกสารและ response จริง 2026-11-05):
+ฟิลด์ที่ใช้ (ยืนยันจากเอกสารและ response จริง 2026-11-05 และ 2026-11-06):
 
 | ฟิลด์ | ใช้เป็น |
 |---|---|
-| `current.sellBar` | ราคาขายออกทองแท่ง (บังคับ) |
-| `current.buyBar` | ราคารับซื้อทองแท่ง (บังคับ) |
-| `current.updatedAt` | เวลาประกาศ ISO-8601 UTC (บังคับ) |
+| `current.sellOrnament` | **ราคาหลัก** ขายออกทองรูปพรรณ (บังคับ, จำนวนเต็ม = ราคาแท่ง + 800) |
+| `current.buyOrnament` | รับซื้อทองรูปพรรณ (บังคับ, อาจมีทศนิยม → ปัด) |
+| `current.sellBar` / `buyBar` | ทองแท่ง (บังคับ, ใช้ตรวจความถูกต้อง) |
+| `current.updatedAt` | ISO-8601 UTC (บังคับ) — **ตั้งแต่ 2026-11-06 เป็นเวลาเซิร์ฟเวอร์ เปลี่ยนทุกครั้งที่เรียก ไม่ใช่เวลาประกาศ** |
 | `current.change` | การเปลี่ยนแปลงเทียบเมื่อวาน (ไม่บังคับ, แสดงใน log) |
-| `current.buyOrnament` / `sellOrnament` | ทองรูปพรรณ (ไม่บังคับ) |
-| `history[ล่าสุด].change` | ทิศทางรอบประกาศล่าสุด → ลูกศร (ไม่บังคับ) |
+| `history[].sellOrnament` / `change` | ทิศทางของรอบที่ราคาตรงกับที่แสดง → ลูกศร (ค้นย้อน 3 รอบล่าสุด) |
 | `world.spotOz` / `world.change` | ราคาทองโลก USD/ออนซ์ (ไม่บังคับ, แหล่งของเว็บ: thaigold.info) |
 
 หมายเหตุ: เอกสารระบุ `updateRound` แต่ response จริงไม่มี จึงไม่ใช้ฟิลด์นี้
-Response จริงที่บันทึกไว้อยู่ที่ `test/fixtures/live_response.h`
+Response จริงที่บันทึกไว้อยู่ที่ `test/fixtures/live_response.h` และ `live_response_2.h`
+
+สิ่งที่พบจาก API จริง (2026-11-06):
+- `current.updatedAt` เปลี่ยนทุก request → firmware **ไม่ใช้เวลานี้ตัดสินว่าราคาเปลี่ยน** (ไม่งั้นจะเขียน flash ทุกนาที)
+- บางช่วง `history` มีรอบใหม่แล้วแต่ `current` ยังเป็นรอบก่อน → จอแสดงตาม `current` และลูกศรใช้รอบที่ราคาตรงกับ `current`
 
 ถ้าต้องเปลี่ยนแหล่งข้อมูล: สร้าง class ใหม่ที่ implement `gold::GoldPriceProvider`
 (ดูตัวอย่าง `ThaiGoldTodayClient`) แล้วเปลี่ยนตัวแปร `provider` ใน `main.cpp` — ส่วนแสดงผลไม่ต้องแก้
@@ -197,7 +236,7 @@ Response จริงที่บันทึกไว้อยู่ที่ `
 4. NTP (UTC) ทำงานเบื้องหลัง — ถ้า sync ไม่ได้ ข้ามการตรวจเวลาประกาศแต่ยังตรวจอายุการดึงข้อมูล
 5. ดึงราคาทันทีที่ต่อ Wi-Fi ได้ แล้วทุก 60 วินาที
 6. ผิดพลาด → retry 15 วิ, 30 วิ, 1 นาที … สูงสุด 5 นาที (เก็บราคาเดิมไว้)
-7. เขียน NVS **เฉพาะเมื่อราคาไทย/เวลาประกาศเปลี่ยน** (ราคาโลกไม่บันทึก)
+7. เขียน NVS **เฉพาะเมื่อราคาไทยเปลี่ยน** (ไม่สนเวลาใน API และไม่บันทึกราคาโลก)
 8. HTTPS ตรวจใบรับรองด้วย root CA ที่ฝังไว้ (ISRG X1/X2, GTS R1/R4)
 
 ## ค่าที่ปรับได้ (`include/gold_config.h`)
@@ -206,13 +245,14 @@ Response จริงที่บันทึกไว้อยู่ที่ `
 |---|---|---|
 | `DISPLAY_MODE_DEFAULT` | 2 | 0 = ขายออก, 1 = ขาย/ซื้อ, 2 = ไทย/โลก |
 | `THAI_SHOW_MS` / `WORLD_SHOW_MS` | 8000 / 4000 | เวลาแสดงไทย / โลก ในโหมด 2 |
-| `THAI_PRICE_ORNAMENT` | 0 | 0 = ทองแท่ง, 1 = ทองรูปพรรณ |
+| `THAI_PRICE_ORNAMENT` | 1 | 1 = ทองรูปพรรณ (ค่าเริ่มต้น), 0 = ทองแท่ง |
 | `SHOW_TREND_ARROW` | 1 | ลูกศรขึ้น/ลง |
 | `DISPLAY_INTENSITY` | 1 | ความสว่างกลางวัน 0–15 |
 | `NIGHT_INTENSITY` | 0 | ความสว่างกลางคืน (0 = เบาสุด) |
 | `NIGHT_START_HOUR` / `NIGHT_END_HOUR` | 22 / 6 | ช่วงกลางคืน (เวลาไทย) |
 | `SETUP_AP_NAME` / `SETUP_AP_PASSWORD` | GoldLED-Setup / goldprice | Wi-Fi สำหรับตั้งค่า |
-| `OTA_PASSWORD` | goldled-ota | รหัสอัปเดตผ่าน Wi-Fi |
+| `OTA_ENABLED` | 1 | เปิด OTA (ทำงานจริงเมื่อมี `ota_password.txt` ที่ผ่านเกณฑ์) |
+| `OTA_MAX_AUTH_FAILURES` / `OTA_LOCKOUT_MIN` | 5 / 15 | รหัสผิดกี่ครั้ง → ล็อก OTA กี่นาที |
 | `DISPLAY_HARDWARE_TYPE` | `FC16_HW` | ถ้าภาพเพี้ยน ลอง `GENERIC_HW`, `PAROLA_HW`, `ICSTATION_HW` |
 | `DISPLAY_MIRROR_X` / `DISPLAY_FLIP_Y` | 0 | ภาพกลับซ้าย-ขวา / บน-ล่าง |
 | `DISPLAY_CS_PIN` | 5 | ขา CS |

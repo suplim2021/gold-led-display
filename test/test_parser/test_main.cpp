@@ -5,6 +5,7 @@
 #include <string>
 
 #include "../fixtures/live_response.h"
+#include "../fixtures/live_response_2.h"
 #include "GoldPriceParser.h"
 #include "GoldPriceProvider.h"
 #include "IsoTime.h"
@@ -322,10 +323,130 @@ void test_provider_abstraction() {
     TEST_ASSERT_EQUAL(Fault::Api, prov.fetch(p).fault);
 }
 
+// ---------------------------------------------------- ornament primary ----
+
+static ParseError parseOrn(const std::string& json, GoldPrice& p) {
+    return parseThaiGoldToday(json.c_str(), json.size(), p, ThaiPrice::Ornament);
+}
+
+void test_live_response_2_ornament_primary() {
+    GoldPrice p;
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseThaiGoldToday(LIVE_RESPONSE_2, strlen(LIVE_RESPONSE_2), p,
+                                         ThaiPrice::Ornament));
+    TEST_ASSERT_TRUE(p.hasOrnament);
+    TEST_ASSERT_EQUAL_INT32(65300, p.sellOrnament);  // shown on the display
+    TEST_ASSERT_EQUAL_INT32(63014, p.buyOrnament);
+    TEST_ASSERT_EQUAL_INT32(64500, p.sellBar);
+    TEST_ASSERT_EQUAL_INT32(800, p.sellOrnament - p.sellBar);
+    // last history round: sellOrnament 65300, change +50 -> up
+    TEST_ASSERT_TRUE(p.hasTrend);
+    TEST_ASSERT_EQUAL_INT8(1, p.trend);
+    TEST_ASSERT_EQUAL_INT32(-750, p.change);  // day change
+    TEST_ASSERT_TRUE(p.hasWorld);
+    TEST_ASSERT_EQUAL_INT32(4071, p.worldSpot);
+}
+
+void test_first_live_response_ornament_primary() {
+    GoldPrice p;
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseThaiGoldToday(LIVE_RESPONSE, strlen(LIVE_RESPONSE), p,
+                                                         ThaiPrice::Ornament));
+    TEST_ASSERT_EQUAL_INT32(66250, p.sellOrnament);
+    TEST_ASSERT_EQUAL_INT8(-1, p.trend);  // history sellOrnament 66250, change -50
+}
+
+static const std::string kHead =
+    "{\"current\":{\"buyBar\":64300,\"sellBar\":64500,\"updatedAt\":\"2026-11-06T02:31:25Z\"";
+
+void test_ornament_primary_required() {
+    GoldPrice p;
+    // missing completely -> E3 (MissingPrice), never falls back to the bar price
+    TEST_ASSERT_EQUAL(ParseError::MissingPrice, parseOrn(kHead + "}}", p));
+    TEST_ASSERT_EQUAL(ParseError::MissingPrice,
+                      parseOrn(kHead + ",\"buyOrnament\":63014}}", p));
+    TEST_ASSERT_EQUAL(ParseError::MissingPrice,
+                      parseOrn(kHead + ",\"sellOrnament\":65300}}", p));
+    TEST_ASSERT_EQUAL(ParseError::MissingPrice,
+                      parseOrn(kHead + ",\"sellOrnament\":null,\"buyOrnament\":63014}}", p));
+    // the bar-primary parser still accepts the same body
+    std::string json = kHead + "}}";
+    TEST_ASSERT_EQUAL(ParseError::Ok, parseThaiGoldToday(json.c_str(), json.size(), p));
+}
+
+void test_ornament_primary_validated() {
+    GoldPrice p;
+    const char* bad[] = {
+        ",\"sellOrnament\":\"N/A\",\"buyOrnament\":63014}}",
+        ",\"sellOrnament\":65300.5,\"buyOrnament\":63014}}",   // fractional sell price
+        ",\"sellOrnament\":0,\"buyOrnament\":0}}",
+        ",\"sellOrnament\":63000,\"buyOrnament\":65300}}",     // buy > sell
+        ",\"sellOrnament\":1065300,\"buyOrnament\":63014}}",   // 7 digits
+        ",\"sellOrnament\":true,\"buyOrnament\":63014}}",
+    };
+    for (const char* tail : bad) {
+        TEST_ASSERT_EQUAL_MESSAGE(ParseError::InvalidPrice, parseOrn(kHead + tail, p), tail);
+    }
+}
+
+void test_ornament_primary_accepts_valid_variants() {
+    GoldPrice p;
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(kHead + ",\"sellOrnament\":\"65,300\",\"buyOrnament\":63020.12}}", p));
+    TEST_ASSERT_EQUAL_INT32(65300, p.sellOrnament);
+    TEST_ASSERT_EQUAL_INT32(63020, p.buyOrnament);  // rounded
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(kHead + ",\"sellOrnament\":65300.0,\"buyOrnament\":63014}}", p));
+    TEST_ASSERT_EQUAL_INT32(65300, p.sellOrnament);
+}
+
+void test_ornament_trend_matches_ornament_history() {
+    GoldPrice p;
+    // history matched on sellOrnament when ornament is primary
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(kHead + ",\"sellOrnament\":65300,\"buyOrnament\":63014},"
+                                       "\"history\":[{\"sellBar\":64500,\"sellOrnament\":65300,"
+                                       "\"change\":-50}]}", p));
+    TEST_ASSERT_TRUE(p.hasTrend);
+    TEST_ASSERT_EQUAL_INT8(-1, p.trend);
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(kHead + ",\"sellOrnament\":65300,\"buyOrnament\":63014},"
+                                       "\"history\":[{\"sellBar\":64500,\"sellOrnament\":65250,"
+                                       "\"change\":50}]}", p));
+    TEST_ASSERT_FALSE(p.hasTrend);  // no entry with the displayed price -> not trusted
+}
+
+void test_trend_when_history_is_ahead_of_current() {
+    // Real situation 2026-11-06 09:36: history already had round 4 (65250, -50)
+    // while current still showed round 3 (65300, +50). The arrow must belong
+    // to the price on the display.
+    GoldPrice p;
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(kHead + ",\"sellOrnament\":65300,\"buyOrnament\":63014},"
+                                       "\"history\":[{\"sellOrnament\":65250,\"change\":-850},"
+                                       "{\"sellOrnament\":65300,\"change\":50},"
+                                       "{\"sellOrnament\":65250,\"change\":-50}]}", p));
+    TEST_ASSERT_TRUE(p.hasTrend);
+    TEST_ASSERT_EQUAL_INT8(1, p.trend);
+    // only the last 3 rounds are searched
+    TEST_ASSERT_EQUAL(ParseError::Ok,
+                      parseOrn(kHead + ",\"sellOrnament\":65300,\"buyOrnament\":63014},"
+                                       "\"history\":[{\"sellOrnament\":65300,\"change\":50},"
+                                       "{\"sellOrnament\":1,\"change\":1},{\"sellOrnament\":2,\"change\":1},"
+                                       "{\"sellOrnament\":3,\"change\":1}]}", p));
+    TEST_ASSERT_FALSE(p.hasTrend);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_live_response_captured_from_api);
     RUN_TEST(test_documented_sample_response);
+    RUN_TEST(test_live_response_2_ornament_primary);
+    RUN_TEST(test_first_live_response_ornament_primary);
+    RUN_TEST(test_ornament_primary_required);
+    RUN_TEST(test_ornament_primary_validated);
+    RUN_TEST(test_ornament_primary_accepts_valid_variants);
+    RUN_TEST(test_ornament_trend_matches_ornament_history);
+    RUN_TEST(test_trend_when_history_is_ahead_of_current);
     RUN_TEST(test_trend_from_history_up_down_flat);
     RUN_TEST(test_trend_ignored_when_history_does_not_match_current);
     RUN_TEST(test_world_optional_and_validated);

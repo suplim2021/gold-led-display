@@ -15,18 +15,21 @@ struct GoldPrice {
     bool hasChange = false;
     int8_t trend = 0;            // direction of the LAST announcement round: -1 / 0 / +1
     bool hasTrend = false;       // trend came from the API history
-    int64_t updatedAtEpoch = 0;  // announcement time, Unix seconds (UTC)
+    int64_t updatedAtEpoch = 0;  // current.updatedAt, Unix seconds (UTC); see sameThaiPrice()
 
     int32_t worldSpot = 0;       // world spot, USD per troy ounce (rounded)
     int8_t worldTrend = 0;       // sign of world.change (vs. previous close)
     bool hasWorld = false;
     int64_t worldUpdatedEpoch = 0;
 
+    // True when everything worth persisting is unchanged. updatedAtEpoch is
+    // deliberately ignored: the API now returns the server time there, which
+    // changes on every request and would otherwise cause a flash write every
+    // poll (verified 2026-11-06).
     bool sameThaiPrice(const GoldPrice& o) const {
         return buyBar == o.buyBar && sellBar == o.sellBar && buyOrnament == o.buyOrnament &&
                sellOrnament == o.sellOrnament && hasOrnament == o.hasOrnament &&
-               change == o.change && hasChange == o.hasChange && trend == o.trend &&
-               updatedAtEpoch == o.updatedAtEpoch;
+               change == o.change && hasChange == o.hasChange && trend == o.trend;
     }
 };
 
