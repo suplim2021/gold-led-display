@@ -4,3 +4,4 @@ include/gold_config.h
 tools/preview/out/
 *.o
 ota_password.txt
+/enclosure/*.blend[0-9]*
