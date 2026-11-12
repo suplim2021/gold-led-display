@@ -69,7 +69,8 @@
 // 1 = skip TLS certificate verification (only if the bundled root CAs ever
 // stop matching the server). Keep 0 normally.
 #define GOLD_API_ALLOW_INSECURE_TLS 0
-#define HTTP_TIMEOUT_MS 10000
+// The API can take ~20 s before sending headers (verified 2026-11-12).
+#define HTTP_TIMEOUT_MS 25000
 
 // ----- Timing -----
 #define POLL_INTERVAL_MS 60000UL         // API caches for 60 s; do not go lower

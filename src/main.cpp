@@ -25,7 +25,7 @@ using namespace gold;
 
 static constexpr int kBootButtonPin = 0;
 static constexpr int64_t kClockValidAfter = 1700000000;  // 2023-11; earlier = not synced
-static constexpr uint32_t kLongPressMs = 5000;
+static constexpr uint32_t kLongPressMs = 10000;
 static constexpr uint32_t kModeBannerMs = 1500;
 
 static LedMatrix display(DISPLAY_HARDWARE_TYPE, DISPLAY_DIN_PIN, DISPLAY_CLK_PIN, DISPLAY_CS_PIN,
@@ -121,7 +121,7 @@ static void showText(const char* text) {
     display.show(f);
 }
 
-// Short press: next display mode. Hold 5 s: forget Wi-Fi, open setup portal.
+// Short press: next display mode. Hold 10 s: forget Wi-Fi, open setup portal.
 static void handleButton(uint32_t nowMs) {
 #if ENABLE_BOOT_BUTTON
     static bool pressed = false;
@@ -279,7 +279,8 @@ void loop() {
 
     if (wifi.connected() && (int32_t)(now - nextFetchMs) >= 0) doFetch();
 
-    handleButton(now);
+    // Use the time of the button sample, since the fetch can block for seconds.
+    handleButton(millis());
 
     const uint32_t t = millis();
     const int64_t epoch = epochNow();
